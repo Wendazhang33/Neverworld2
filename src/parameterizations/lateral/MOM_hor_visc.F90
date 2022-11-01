@@ -66,6 +66,7 @@ type, public :: hor_visc_CS ; private
                              !! The default is 1.0.
   real    :: KS_coef         !! A nondimensional coefficient on the biharmonic viscosity that sets the kill
                              !< switch for backscatter. Default is 1.0.
+  real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
   real    :: BS_Re           !< The Reynolds number for the parameterized stress due to backscatter. Should be large
                              !! to avoid the risk of numerical instability.
   real    :: BS_alpha
@@ -1322,7 +1323,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
             !Kh_BS(i,j) = SIGN( MIN(ABS(Kh_BS(i,j)), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Kh_Max_xx(i,j)), Kh_BS(i,j))
             
-          Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**2)
+          Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
 
 !          else
 !            Kh_BS(i,j) = 0
@@ -1330,7 +1331,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         enddo ; enddo
 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          str_xx_BS(i,j) = -Kh_BS(i,j) * (sh_xx(i,j) - sh_xx_bt(i,j))
+          str_xx_BS(i,j) = -Kh_BS(i,j) * (sh_xx(i,j))
         !  str_xx_BS(i,j) = SIGN( MIN( CS%BS_Re * ABS(d_str_h(i,j)) , ABS(str_xx_BS(i,j))), str_xx_BS(i,j))
           !KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
           !str_xx_BS(i,j) = SIGN( MIN( IBS_Re * MIN(CS%BS_vel_scale**2, KE), ABS(str_xx_BS(i,j))), str_xx_BS(i,j))
@@ -1734,7 +1735,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
           !Kh_BS(i,j) = SIGN( MIN(ABS(Kh_BS(i,j)), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Kh_Max_xy(i,j)), Kh_BS(i,j))
 
-          Kh_BS(I,J) = tmp * ( VarMix%ebt_struct(i,j,k)**2)
+          Kh_BS(I,J) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
 
 !          if (tmp <= -hrat_min(I,J) * CS%Kh_Max_xy(I,J)) then
 !            visc_bound_rem(i,j) = 0.0
@@ -1747,7 +1748,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         enddo ; enddo
 
          do J=js-1,Jeq ; do I=is-1,Ieq
-           str_xy_BS(I,J) = -Kh_BS(I,J) * (sh_xy(I,J)-sh_xy_bt(I,J))
+           str_xy_BS(I,J) = -Kh_BS(I,J) * (sh_xy(I,J))
 !           str_xy_BS(I,J) = SIGN( MIN( CS%BS_Re * ABS(d_str_q(I,J)) , ABS(str_xy_BS(I,J))), str_xy_BS(I,J))
            !KE = 0.125 * ((u(I,j,k) + u(I,j+1,k))**2 + (v(i,J,k) + v(i+1,J,k))**2)
            !str_xy_BS(I,J) = SIGN( MIN( IBS_Re * MIN(KE,CS%BS_vel_scale**2), ABS(str_xy_BS(I,J))), str_xy_BS(I,J))
@@ -2402,6 +2403,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   call get_param(param_file, mdl, "BOUND_KH_WITH_MEKE_COEF", CS%bound_Kh_with_MEKE_coef, &
                  "A nondimensional coefficient to make the MEKE bound on the Laplacian "//&
                  "viscosity stricter.", units="nondim", &
+                 default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "EBT_POWER", CS%EBT_power, &
+                 "Power to raise EBT vertical structure to", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "KILL_SWITCH_COEF", CS%KS_coef, &
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
