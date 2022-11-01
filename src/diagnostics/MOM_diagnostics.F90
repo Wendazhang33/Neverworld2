@@ -92,7 +92,6 @@ type, public :: diagnostics_CS ; private
   integer :: id_cfl_cg1_x      = -1, id_cfl_cg1_y      = -1
   integer :: id_cg_ebt         = -1, id_Rd_ebt         = -1
   integer :: id_p_ebt          = -1
-  integer :: id_p_bc1          = -1
   integer :: id_temp_int       = -1, id_salt_int       = -1
   integer :: id_mass_wt        = -1, id_col_mass       = -1
   integer :: id_masscello      = -1, id_masso          = -1
@@ -695,14 +694,6 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
       enddo ; enddo
       call post_data(CS%id_cfl_cg1_y, CFL_cg1, CS%diag)
     endif
-  endif
-  if (CS%id_p_bc1>0) then
-  ! Here work_3d is used for the equivalent barotropic modal structure [nondim].
-    work_3d(:,:,:) = 0.0
-    call wave_speed(h, tv, G, GV, US, cg1, CS%wave_speed, use_ebt_mode=.false., &
-                  mono_N2_column_fraction=CS%mono_N2_column_fraction, &
-                  mono_N2_depth=CS%mono_N2_depth, modal_structure=work_3d)
-    call post_data(CS%id_p_bc1, work_3d, CS%diag)
   endif
 
   if ((CS%id_cg_ebt>0) .or. (CS%id_Rd_ebt>0) .or. (CS%id_p_ebt>0)) then
@@ -1797,8 +1788,6 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
       'Equivalent barotropic deformation radius', 'm', conversion=US%L_to_m)
   CS%id_p_ebt = register_diag_field('ocean_model', 'p_ebt', diag%axesTL, Time, &
       'Equivalent barotropic modal strcuture', 'nondim')
-  CS%id_p_bc1 = register_diag_field('ocean_model', 'p_bc1', diag%axesTL, Time, &
-      'First baroclinic modal strcuture', 'nondim')
 
   if ((CS%id_cg1>0) .or. (CS%id_Rd1>0) .or. (CS%id_cfl_cg1>0) .or. &
       (CS%id_cfl_cg1_x>0) .or. (CS%id_cfl_cg1_y>0) .or. &
@@ -1806,11 +1795,6 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
     call wave_speed_init(CS%wave_speed, remap_answers_2018=remap_answers_2018, &
                          better_speed_est=better_speed_est, min_speed=wave_speed_min, &
                          wave_speed_tol=wave_speed_tol)
-
-  else if (CS%id_p_bc1>0) then
-    call wave_speed_init(CS%wave_speed, remap_answers_2018=remap_answers_2018, &
-                         better_speed_est=better_speed_est, min_speed=wave_speed_min, &
-                         wave_speed_tol=wave_speed_tol, use_ebt_mode=.false.)    
   endif
 
   CS%id_mass_wt = register_diag_field('ocean_model', 'mass_wt', diag%axesT1, Time,  &

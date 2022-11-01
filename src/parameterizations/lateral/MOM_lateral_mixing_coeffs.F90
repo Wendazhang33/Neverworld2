@@ -103,7 +103,6 @@ type, public :: VarMix_CS
   real, allocatable :: slope_x(:,:,:)     !< Zonal isopycnal slope [nondim]
   real, allocatable :: slope_y(:,:,:)     !< Meridional isopycnal slope [nondim]
   real, allocatable :: ebt_struct(:,:,:)  !< Vertical structure function to scale diffusivities with [nondim]
-  real, allocatable :: bc1_struct(:,:,:)  !< Vertical structure function to scale diffusivities with [nondim]
 
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
     Laplac3_const_u       !< Laplacian metric-dependent constants [L3 ~> m3]
@@ -240,8 +239,6 @@ subroutine calc_resoln_function(h, tv, G, GV, US, CS)
         call wave_speed(h, tv, G, GV, US, CS%cg1, CS%wave_speed)
       endif
       call pass_var(CS%ebt_struct, G%Domain)
-    else
-      call wave_speed(h, tv, G, GV, US, CS%cg1, CS%wave_speed, modal_structure=CS%bc1_struct)
     endif
 
     call create_group_pass(CS%pass_cg1, CS%cg1, G%Domain)
@@ -1276,8 +1273,6 @@ subroutine VarMix_init(Time, G, GV, US, param_file, diag, CS)
                  "artifacts from altering the equivalent barotropic mode structure.",&
                  units="m", default=2000., scale=US%m_to_Z)
     allocate(CS%ebt_struct(isd:ied,jsd:jed,GV%ke), source=0.0)
-  else
-    allocate(CS%bc1_struct(isd:ied,jsd:jed,GV%ke), source=0.0)
   endif
 
   if (CS%use_stored_slopes) then
