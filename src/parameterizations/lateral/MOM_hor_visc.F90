@@ -66,6 +66,7 @@ type, public :: hor_visc_CS ; private
                              !! The default is 1.0.
   real    :: KS_coef         !! A nondimensional coefficient on the biharmonic viscosity that sets the kill
                              !< switch for backscatter. Default is 1.0.
+  real    :: KS_velocity     !! A nondimensional velocity scale for computing CFL limit for turning off backscatter
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
   real    :: BS_Re           !< The Reynolds number for the parameterized stress due to backscatter. Should be large
                              !! to avoid the risk of numerical instability.
@@ -140,6 +141,7 @@ type, public :: hor_visc_CS ; private
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
     Kh_Max_xx,      & !< The maximum permitted Laplacian viscosity [L2 T-1 ~> m2 s-1].
     Ah_Max_xx,      & !< The maximum permitted biharmonic viscosity [L4 T-1 ~> m4 s-1].
+    Ah_Max_xx_KS,   & !< The maximum permitted biharmonic viscosity for kill switch [L4 T-1 ~> m4 s-1].
     n1n2_h,         & !< Factor n1*n2 in the anisotropic direction tensor at h-points
     n1n1_m_n2n2_h,  & !< Factor n1**2-n2**2 in the anisotropic direction tensor at h-points
     grid_sp_h2,     & !< Harmonic mean of the squares of the grid [L2 ~> m2]
@@ -158,6 +160,7 @@ type, public :: hor_visc_CS ; private
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEMB_PTR_) :: &
     Kh_Max_xy,      & !< The maximum permitted Laplacian viscosity [L2 T-1 ~> m2 s-1].
     Ah_Max_xy,      & !< The maximum permitted biharmonic viscosity [L4 T-1 ~> m4 s-1].
+    Ah_Max_xy_KS,   & !< The maximum permitted biharmonic viscosity for kill switch [L4 T-1 ~> m4 s-1].
     n1n2_q,         & !< Factor n1*n2 in the anisotropic direction tensor at q-points
     n1n1_m_n2n2_q     !< Factor n1**2-n2**2 in the anisotropic direction tensor at q-points
 
@@ -1257,23 +1260,29 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           !Ah(i,j) = sqrt(KE) * CS%Re_Ah_const_xx(i,j)
         enddo ; enddo
       endif
-      
-      visc_limit_h_flag(:,:,:) = 0.
+
       if (CS%better_bound_Ah) then
         if (CS%better_bound_Kh) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            tmp = CS%KS_coef * visc_bound_rem(i,j) * hrat_min(i,j) * CS%Ah_Max_xx(i,j)
-            visc_limit_h(i,j,k) = tmp
-            visc_limit_h_frac(i,j,k) = Ah(i,j) / (visc_bound_rem(i,j) * hrat_min(i,j) * CS%Ah_Max_xx(i,j))
-            if (Ah(i,j) >= tmp) then
-              visc_bound_rem(i,j) = 0.0
-              Ah(i,j) = MIN(tmp * IKS_coef, Ah(i,j))
-              visc_limit_h_flag(i,j,k) = 1.
-            elseif (tmp>0.) then
-              visc_bound_rem(i,j) = 1.0 - Ah(i,j) / tmp
-            endif
+            Ah(i,j) = min(Ah(i,j), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Ah_Max_xx(i,j))
+          enddo ; enddo
+        else
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            Ah(i,j) = min(Ah(i,j), hrat_min(i,j) * CS%Ah_Max_xx(i,j))
           enddo ; enddo
         endif
+      endif
+
+      visc_limit_h_flag(:,:,:) = 0.
+      if (CS%bound_Kh_with_MEKE) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            tmp = hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j)
+            visc_limit_h(i,j,k) = tmp
+            visc_limit_h_frac(i,j,k) = Ah(i,j) / ( hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j))
+            if (Ah(i,j) >= tmp) then
+              visc_limit_h_flag(i,j,k) = 1.
+            endif
+          enddo ; enddo
       endif
 
       if ((CS%id_Ah_h>0) .or. CS%debug) then
@@ -1312,10 +1321,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             tmp = 0.
               !MEKE%MEKE(i,j) = 0.
           else
-            tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
-                   SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
-                   0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
-            ! tmp = MEKE%Ku(i,j) 
+            !tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
+            !       SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
+            !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
+            tmp = MEKE%Ku(i,j) 
             ! tmp = MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) not using this resolution function for now
           endif
             !KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
@@ -1678,23 +1687,29 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           !Ah(I,J) = sqrt(KE) * CS%Re_Ah_const_xy(i,j)
         enddo ; enddo
       endif
-      
-      visc_limit_q_flag(:,:,:) = 0.
+
       if (CS%better_bound_Ah) then
         if (CS%better_bound_Kh) then
           do J=js-1,Jeq ; do I=is-1,Ieq
-            tmp = CS%KS_coef * visc_bound_rem(I,J) * hrat_min(I,J) * CS%Ah_Max_xy(I,J)
-            visc_limit_q(I,J,k) = tmp
-            visc_limit_q_frac(i,j,k) = Ah(i,j) / (visc_bound_rem(i,j) * hrat_min(i,j) * CS%Ah_Max_xy(i,j))
-            if (Ah(I,J) >= tmp) then
-              visc_bound_rem(I,J) = 0.0
-              Ah(I,J) = MIN(tmp * IKS_coef, Ah(I,J))
-              visc_limit_q_flag(I,J,k) = 1.
-            elseif (tmp>0.) then
-              visc_bound_rem(I,J) = 1.0 - Ah(I,J) / tmp
-            endif
+            Ah(I,J) = min(Ah(i,j), visc_bound_rem(i,j) * hrat_min(I,J) * CS%Ah_Max_xy(I,J))
+          enddo ; enddo
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Ah(I,J) = min(Ah(i,j), hrat_min(I,J) * CS%Ah_Max_xy(I,J))
           enddo ; enddo
         endif
+      endif
+      
+      visc_limit_q_flag(:,:,:) = 0.
+      if (CS%bound_Kh_with_MEKE) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            tmp = hrat_min(I,J) * CS%Ah_Max_xy_KS(I,J)
+            visc_limit_q(I,J,k) = tmp
+            visc_limit_q_frac(i,j,k) = Ah(i,j) / (hrat_min(i,j) * CS%Ah_Max_xy_KS(i,j))
+            if (Ah(I,J) >= tmp) then
+              visc_limit_q_flag(I,J,k) = 1.
+            endif
+          enddo ; enddo
       endif
 
       if (CS%id_Ah_q>0 .or. CS%debug) then
@@ -1722,12 +1737,12 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           if (visc_limit_q_flag(I,J,k) > 0) then
             tmp = 0.
           else
-            tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * &
-                   0.25 * ( (MEKE%MEKE(i,j) + MEKE%MEKE(i+1,j+1)) + (MEKE%MEKE(i+1,j) + MEKE%MEKE(i,j+1)) ) / &
-                   SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2 + &
-                   (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
-                   0.5 * sh_xy(I,J)**2 + eps)
-            ! tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            !tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * &
+            !       0.25 * ( (MEKE%MEKE(i,j) + MEKE%MEKE(i+1,j+1)) + (MEKE%MEKE(i+1,j) + MEKE%MEKE(i,j+1)) ) / &
+            !       SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2 + &
+            !       (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
+            !       0.5 * sh_xy(I,J)**2 + eps)
+            tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
             ! tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * VarMix%Res_fn_q(I,J) not using res fn for now
           endif
           !KE = 0.125 * ((u(I,j,k) + u(I,j+1,k))**2 + (v(i,J,k) + v(i+1,J,k))**2)
@@ -2411,6 +2426,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
                  "sets the kill switch for backscatter. Default is 1.0.", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "KILL_SWITCH_VEL_SCALE", CS%KS_velocity, &
+                 "A velocity scale for computing the CFL limit for viscosity "// &
+                 "that determines when backscatter is shut off. Default is 0.1.", &
+                 default=0.1, units="m s-1", scale=US%m_s_to_L_T, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "BACKSCATTER_RE", CS%BS_Re, &
                  "The Reynolds number for the parameterized stress due to backscatter. Should be large "//&
                  "to avoid the risk of numerical instability.", units="nondim", &
@@ -2564,6 +2583,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     if (CS%bound_Ah .or. CS%better_bound_Ah) then
       ALLOC_(CS%Ah_Max_xx(isd:ied,jsd:jed))     ; CS%Ah_Max_xx(:,:) = 0.0
       ALLOC_(CS%Ah_Max_xy(IsdB:IedB,JsdB:JedB)) ; CS%Ah_Max_xy(:,:) = 0.0
+    endif
+    if (CS%bound_Kh_with_MEKE) then
+      ALLOC_(CS%Ah_Max_xx_KS(isd:ied,jsd:jed))     ; CS%Ah_Max_xx_KS(:,:) = 0.0
+      ALLOC_(CS%Ah_Max_xy_KS(IsdB:IedB,JsdB:JedB)) ; CS%Ah_Max_xy_KS(:,:) = 0.0
     endif
     if (CS%Smagorinsky_Ah) then
       ALLOC_(CS%Biharm_const_xx(isd:ied,jsd:jed))     ; CS%Biharm_const_xx(:,:) = 0.0
@@ -2740,6 +2763,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_Max_xx(i,j) = Ah_Limit * (grid_sp_h2 * grid_sp_h2)
         CS%Ah_bg_xx(i,j) = MIN(CS%Ah_bg_xx(i,j), CS%Ah_Max_xx(i,j))
       endif
+      if (CS%bound_Kh_with_MEKE) then
+        CS%Ah_Max_xx_KS(i,j) = CS%KS_velocity * grid_sp_h3
+      endif
       min_grid_sp_h4 = min(grid_sp_h2**2, min_grid_sp_h4)
     enddo ; enddo
     call min_across_PEs(min_grid_sp_h4)
@@ -2764,6 +2790,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
       if (CS%bound_Ah .and. .not.CS%better_bound_Ah) then
         CS%Ah_Max_xy(I,J) = Ah_Limit * (grid_sp_q2 * grid_sp_q2)
         CS%Ah_bg_xy(I,J) = MIN(CS%Ah_bg_xy(I,J), CS%Ah_Max_xy(I,J))
+      endif
+      if (CS%bound_Kh_with_MEKE) then
+        CS%Ah_Max_xy_KS(i,j) = CS%KS_velocity * grid_sp_q3
       endif
     enddo ; enddo
   endif
@@ -3154,6 +3183,9 @@ subroutine hor_visc_end(CS)
     DEALLOC_(CS%Ah_bg_xx) ; DEALLOC_(CS%Ah_bg_xy)
     if (CS%bound_Ah) then
       DEALLOC_(CS%Ah_Max_xx) ; DEALLOC_(CS%Ah_Max_xy)
+    endif
+    if (CS%bound_Kh_with_MEKE) then
+      DEALLOC_(CS%Ah_Max_xx_KS) ; DEALLOC_(CS%Ah_Max_xy_KS)
     endif
     if (CS%Smagorinsky_Ah) then
       DEALLOC_(CS%Biharm_const_xx) ; DEALLOC_(CS%Biharm_const_xy)
