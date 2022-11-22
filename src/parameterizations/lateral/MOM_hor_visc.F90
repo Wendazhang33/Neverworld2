@@ -66,7 +66,7 @@ type, public :: hor_visc_CS ; private
                              !! The default is 1.0.
   real    :: KS_coef         !! A nondimensional coefficient on the biharmonic viscosity that sets the kill
                              !< switch for backscatter. Default is 1.0.
-  real    :: KS_velocity     !! A nondimensional velocity scale for computing CFL limit for turning off backscatter
+  real    :: KS_timescale    !! A timescale for computing CFL limit for turning off backscatter (~DT)
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
   real    :: BS_Re           !< The Reynolds number for the parameterized stress due to backscatter. Should be large
                              !! to avoid the risk of numerical instability.
@@ -1276,9 +1276,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       visc_limit_h_flag(:,:,:) = 0.
       if (CS%bound_Kh_with_MEKE) then
           do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            tmp = hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j)
+            tmp = CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j)
             visc_limit_h(i,j,k) = tmp
-            visc_limit_h_frac(i,j,k) = Ah(i,j) / ( hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j))
+            visc_limit_h_frac(i,j,k) = Ah(i,j) / (CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j))
             if (Ah(i,j) >= tmp) then
               visc_limit_h_flag(i,j,k) = 1.
             endif
@@ -1703,9 +1703,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       visc_limit_q_flag(:,:,:) = 0.
       if (CS%bound_Kh_with_MEKE) then
           do J=js-1,Jeq ; do I=is-1,Ieq
-            tmp = hrat_min(I,J) * CS%Ah_Max_xy_KS(I,J)
+            tmp = CS%KS_coef *hrat_min(I,J) * CS%Ah_Max_xy_KS(I,J)
             visc_limit_q(I,J,k) = tmp
-            visc_limit_q_frac(i,j,k) = Ah(i,j) / (hrat_min(i,j) * CS%Ah_Max_xy_KS(i,j))
+            visc_limit_q_frac(i,j,k) = Ah(i,j) / (CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xy_KS(i,j))
             if (Ah(I,J) >= tmp) then
               visc_limit_q_flag(I,J,k) = 1.
             endif
@@ -2426,10 +2426,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
                  "sets the kill switch for backscatter. Default is 1.0.", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
-  call get_param(param_file, mdl, "KILL_SWITCH_VEL_SCALE", CS%KS_velocity, &
-                 "A velocity scale for computing the CFL limit for viscosity "// &
-                 "that determines when backscatter is shut off. Default is 0.1.", &
-                 default=0.1, units="m s-1", scale=US%m_s_to_L_T, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "BACKSCATTER_RE", CS%BS_Re, &
                  "The Reynolds number for the parameterized stress due to backscatter. Should be large "//&
                  "to avoid the risk of numerical instability.", units="nondim", &
@@ -2498,6 +2494,11 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  fail_if_missing=.true.)
     Idt = 1.0 / dt
   endif
+  call get_param(param_file, mdl, "KILL_SWITCH_TIMESCALE", CS%KS_timescale, &
+                 "A timescale for computing the CFL limit for viscosity "// &
+                 "that determines when backscatter is shut off. Default is 900 (should be DT).", &
+                 default= dt ,  units="s", scale=US%s_to_T, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+
   if (CS%no_slip .and. CS%biharmonic) &
     call MOM_error(FATAL,"ERROR: NOSLIP and BIHARMONIC cannot be defined "// &
                          "at the same time in MOM.")
@@ -2764,7 +2765,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_bg_xx(i,j) = MIN(CS%Ah_bg_xx(i,j), CS%Ah_Max_xx(i,j))
       endif
       if (CS%bound_Kh_with_MEKE) then
-        CS%Ah_Max_xx_KS(i,j) = CS%KS_velocity * grid_sp_h3
+        CS%Ah_Max_xx_KS(i,j) = (grid_sp_h2 * grid_sp_h2 * 0.3) / (CS%KS_timescale*64.0)
       endif
       min_grid_sp_h4 = min(grid_sp_h2**2, min_grid_sp_h4)
     enddo ; enddo
@@ -2792,7 +2793,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_bg_xy(I,J) = MIN(CS%Ah_bg_xy(I,J), CS%Ah_Max_xy(I,J))
       endif
       if (CS%bound_Kh_with_MEKE) then
-        CS%Ah_Max_xy_KS(i,j) = CS%KS_velocity * grid_sp_q3
+        CS%Ah_Max_xy_KS(i,j) = (grid_sp_q2 * grid_sp_q2 * 0.3) / (CS%KS_timescale*64.0)
       endif
     enddo ; enddo
   endif
