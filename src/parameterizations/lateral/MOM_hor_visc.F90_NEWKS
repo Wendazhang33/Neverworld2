@@ -1324,14 +1324,14 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             !tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
             !       SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
             !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
-            tmp = MEKE%Ku(i,j)
+            tmp = MEKE%Ku(i,j) 
             ! tmp = MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) not using this resolution function for now
           endif
             !KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
             !Kh_BS(i,j) = CS%BS_beta * sqrt(KE * CS%grid_sp_h2(i,j)) * (CS%BS_alpha * grid_Re_Ah(i,j,k) - 1) / (CS%BS_alpha * grid_Re_Ah(i,j,k))
 
             !Kh_BS(i,j) = SIGN( MIN(ABS(Kh_BS(i,j)), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Kh_Max_xx(i,j)), Kh_BS(i,j))
-
+            
           Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
 
 !          else
@@ -1699,7 +1699,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           enddo ; enddo
         endif
       endif
-
+      
       visc_limit_q_flag(:,:,:) = 0.
       if (CS%bound_Kh_with_MEKE) then
           do J=js-1,Jeq ; do I=is-1,Ieq
@@ -2764,9 +2764,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_Max_xx(i,j) = Ah_Limit * (grid_sp_h2 * grid_sp_h2)
         CS%Ah_bg_xx(i,j) = MIN(CS%Ah_bg_xx(i,j), CS%Ah_Max_xx(i,j))
       endif
-     ! if (CS%bound_Kh_with_MEKE) then
-     !   CS%Ah_Max_xx_KS(i,j) = (grid_sp_h2 * grid_sp_h2 * 0.3) / (CS%KS_timescale*64.0)
-     ! endif
+      if (CS%bound_Kh_with_MEKE) then
+        CS%Ah_Max_xx_KS(i,j) = (grid_sp_h2 * grid_sp_h2 * 0.3) / (CS%KS_timescale*64.0)
+      endif
       min_grid_sp_h4 = min(grid_sp_h2**2, min_grid_sp_h4)
     enddo ; enddo
     call min_across_PEs(min_grid_sp_h4)
@@ -2792,9 +2792,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_Max_xy(I,J) = Ah_Limit * (grid_sp_q2 * grid_sp_q2)
         CS%Ah_bg_xy(I,J) = MIN(CS%Ah_bg_xy(I,J), CS%Ah_Max_xy(I,J))
       endif
-      !if (CS%bound_Kh_with_MEKE) then
-      !  CS%Ah_Max_xy_KS(i,j) = (grid_sp_q2 * grid_sp_q2 * 0.3) / (CS%KS_timescale*64.0)
-      !endif
+      if (CS%bound_Kh_with_MEKE) then
+        CS%Ah_Max_xy_KS(i,j) = (grid_sp_q2 * grid_sp_q2 * 0.3) / (CS%KS_timescale*64.0)
+      endif
     enddo ; enddo
   endif
   ! The Laplacian bounds should avoid overshoots when CS%bound_coef < 1.
@@ -2858,13 +2858,8 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
            CS%DX_dyT(i,j)*(G%IdxCv(i,J)*v0v(i,J) + G%IdxCv(i,J-1)*v0v(i,J-1))) * &
           max(G%IdxCv(i,J)*G%IareaCv(i,J), G%IdxCv(i,J-1)*G%IareaCv(i,J-1)) ) )
       CS%Ah_Max_xx(I,J) = 0.0
-      if (denom > 0.0) then
+      if (denom > 0.0) &
         CS%Ah_Max_xx(I,J) = CS%bound_coef * 0.5 * Idt / denom
-        if (CS%bound_Kh_with_MEKE) then
-        CS%Ah_Max_xx_KS(i,j) = CS%bound_coef * 0.5 / (CS%KS_timescale * denom)
-        endif
-      endif
-
     enddo ; enddo
     do J=js-1,Jeq ; do I=is-1,Ieq
       denom = max( &
@@ -2877,12 +2872,8 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
            CS%DY_dxBu(I,J)*(v0v(i+1,J)*G%IdyCv(i+1,J) + v0v(i,J)*G%IdyCv(i,J))) * &
           max(G%IdyCv(i,J)*G%IareaCv(i,J), G%IdyCv(i+1,J)*G%IareaCv(i+1,J)) ) )
       CS%Ah_Max_xy(I,J) = 0.0
-      if (denom > 0.0) then
+      if (denom > 0.0) &
         CS%Ah_Max_xy(I,J) = CS%bound_coef * 0.5 * Idt / denom
-        if (CS%bound_Kh_with_MEKE) then
-        CS%Ah_Max_xy_KS(i,j) = CS%bound_coef * 0.5 / (CS%KS_timescale * denom)
-        endif
-      endif
     enddo ; enddo
     if (CS%debug) then
       call hchksum(CS%Ah_Max_xx, "Ah_Max_xx", G%HI, haloshift=0, scale=US%L_to_m**4*US%s_to_T)
