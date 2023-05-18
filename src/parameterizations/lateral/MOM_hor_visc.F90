@@ -68,10 +68,6 @@ type, public :: hor_visc_CS ; private
                              !< switch for backscatter. Default is 1.0.
   real    :: KS_timescale    !! A timescale for computing CFL limit for turning off backscatter (~DT)
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
-  real    :: BS_Re           !< The Reynolds number for the parameterized stress due to backscatter. Should be large
-                             !! to avoid the risk of numerical instability.
-  real    :: BS_alpha
-  real    :: BS_beta
   real    :: BS_vel_scale    !< The velocity scale used to limit the magnitude of the MEKE backscatter.
   logical :: Smagorinsky_Kh  !< If true, use Smagorinsky nonlinear eddy
                              !! viscosity. KH is the background value.
@@ -109,8 +105,6 @@ type, public :: hor_visc_CS ; private
   logical :: res_scale_MEKE  !< If true, the viscosity contribution from MEKE is scaled by
                              !! the resolution function.
   logical :: use_GME         !< If true, use GME backscatter scheme.
-  logical :: use_BTBS        !< If true, use MEKE barotropic backscatter scheme.
-  logical :: smooth_BS        !< If true, use smoothing on backscatter.
   logical :: answers_2018    !< If true, use the order of arithmetic and expressions that recover the
                              !! answers from the end of 2018.  Otherwise, use updated and more robust
                              !! forms of the same expressions.
@@ -190,8 +184,7 @@ type, public :: hor_visc_CS ; private
     Biharm_const_xx,  & !< Biharmonic metric-dependent constants [L4 ~> m4]
     Biharm_const2_xx, & !< Biharmonic metric-dependent constants [T L4 ~> s m4]
     Re_Ah_const_xx, &   !< Biharmonic metric-dependent constants [L3 ~> m3]
-    Re_Kh_const_xx, &   !< Harmonic metric-dependent constants [L ~> m]
-    delu_scale          !< Scaling for velocity gradient norm
+    Re_Kh_const_xx      !< Harmonic metric-dependent constants [L ~> m]
 
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEMB_PTR_) :: &
     Laplac2_const_xy, & !< Laplacian  metric-dependent constants [L2 ~> m2]
@@ -234,7 +227,7 @@ type, public :: hor_visc_CS ; private
   integer :: id_visc_limit_h_flag = -1, id_visc_limit_q_flag = -1
   integer :: id_visc_limit_h_frac = -1, id_visc_limit_q_frac = -1
   integer :: id_BS_coeff_h = -1, id_BS_coeff_q = -1
-  integer :: id_delu_scale = -1, id_delu_mag
+  integer :: id_delu_mag
   !>@}
 
 end type hor_visc_CS
@@ -440,9 +433,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   integer :: i, j, k, n
   real :: inv_PI3, inv_PI2, inv_PI6
   real :: zero_out_Leith
-  real :: IBS_Re
   real :: tmp
-  real :: IKS_coef  ! Inverse of KS_coef
   character(len=255) :: msg
 
   ! Fields evaluated on active layers, used for constructing 3D stress fields
@@ -475,14 +466,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   inv_PI6 = inv_PI3 * inv_PI3
   eps =1. ; eps = epsilon(eps)
 
-  IKS_coef = 1. / CS%KS_coef
-
   visc_limit_h(:,:,:) = 0.
   visc_limit_q(:,:,:) = 0.
-
-  if (CS%bound_Kh_with_MEKE) then
-    IBS_Re = 1. / CS%BS_Re
-  endif
 
   if (present(OBC)) then ; if (associated(OBC)) then ; if (OBC%OBC_pe) then
     apply_OBC = OBC%Flather_u_BCs_exist_globally .or. OBC%Flather_v_BCs_exist_globally
@@ -505,8 +490,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   ! Toggle whether to use a Laplacian viscosity derived from MEKE
   use_MEKE_Ku = allocated(MEKE%Ku)
-  if (CS%use_BTBS .and. .not. use_MEKE_Ku) &
-    call MOM_error(FATAL, "MOM_hor_visc: USE_BTBS requires use_MEKE_Ku to be set.")
   use_MEKE_Au = allocated(MEKE%Au)
 
   rescale_Kh = .false.
@@ -529,8 +512,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     zero_out_Leith = 1.
   endif
 
-!Point A: Add BTBS flag
-  if (CS%use_GME .or. CS%use_BTBS .or. CS%bound_Kh_with_MEKE) then
+  if (CS%use_GME .or. CS%bound_Kh_with_MEKE) then
 
     do j=Jsq-1,Jeq+2 ; do i=Isq-1,Ieq+2
       boundary_mask_h(i,j) = (G%mask2dCu(I,j) * G%mask2dCv(i,J) * G%mask2dCu(I-1,j) * G%mask2dCv(i,J-1))
@@ -1067,19 +1049,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         Kh(i,j) = max(Kh(i,j), CS%Kh_bg_min)
       enddo ; enddo
-!Point D
-      !if (use_MEKE_Ku .and. .not. CS%use_BTBS .and. .not. CS%smooth_BS) then
-      !  ! *Add* the MEKE contribution (which might be negative)
-      !  if (CS%res_scale_MEKE) then
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      Kh(i,j) = Kh(i,j) + MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j)
-      !    enddo ; enddo
-      !  else
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      Kh(i,j) = Kh(i,j) + MEKE%Ku(i,j)
-      !    enddo ; enddo
-      !  endif
-      !endif
 
       if (CS%anisotropic) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1138,52 +1107,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = -Kh(i,j) * sh_xx(i,j)
       enddo ; enddo
-
-      !if (CS%smooth_BS .and. .not. CS%use_BTBS) then
-      !  if (CS%res_scale_MEKE) then
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx(i,j)
-      !    enddo ; enddo
-      !    call smooth_GME(CS, G, GME_flux_h=BS_temph)
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
-      !    enddo ; enddo
-      !  else
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx(i,j)
-      !    enddo ; enddo
-!!Inserting new loop for filtered BS:
-      !    call smooth_GME(CS, G, GME_flux_h=BS_temph)
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !       str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
-      !    enddo ; enddo
-      !  endif
-      !endif
-!! Point C insert str_xx with BTBS, add resolution function
-      !if (CS%use_BTBS) then
-      !  if (CS%res_scale_MEKE) then
-      !    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !      BS_temph(i,j) = -MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) *sh_xx_bt(i,j)
-      !    enddo ; enddo
-!!Inserting new loop for filtered BS:
-
-!          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_h=BS_temph)
-!          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-!            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
-!          enddo ; enddo
-!!End of new loop
-!        else
-!          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-!            BS_temph(i,j) =  -MEKE%Ku(i,j)  * sh_xx_bt(i,j)
-!          enddo ; enddo
-!!Inserting new loop for filtered BS:
-!          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_h=BS_temph)
-!          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-!            str_xx(i,j) = str_xx(i,j) + BS_temph(i,j)
-!          enddo ; enddo
-!!End of new loop
-!        endif
-!      endif
 
     else
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1316,39 +1239,19 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     ! Backscatter using MEKE
       if (CS%bound_Kh_with_MEKE) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          !if (grid_Re_Ah(i,j,k) < 1.) then
           if (visc_limit_h_flag(i,j,k) > 0) then
             tmp = 0.
-              !MEKE%MEKE(i,j) = 0.
           else
             !tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
             !       SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
             !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
             tmp = MEKE%Ku(i,j)
-            ! tmp = MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j) not using this resolution function for now
           endif
-            !KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
-            !Kh_BS(i,j) = CS%BS_beta * sqrt(KE * CS%grid_sp_h2(i,j)) * (CS%BS_alpha * grid_Re_Ah(i,j,k) - 1) / (CS%BS_alpha * grid_Re_Ah(i,j,k))
-
-            !Kh_BS(i,j) = SIGN( MIN(ABS(Kh_BS(i,j)), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Kh_Max_xx(i,j)), Kh_BS(i,j))
-
           Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
-
-!          else
-!            Kh_BS(i,j) = 0
-!          endif
         enddo ; enddo
 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          str_xx_BS(i,j) = -Kh_BS(i,j) * (sh_xx(i,j))
-        !  str_xx_BS(i,j) = SIGN( MIN( CS%BS_Re * ABS(d_str_h(i,j)) , ABS(str_xx_BS(i,j))), str_xx_BS(i,j))
-          !KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
-          !str_xx_BS(i,j) = SIGN( MIN( IBS_Re * MIN(CS%BS_vel_scale**2, KE), ABS(str_xx_BS(i,j))), str_xx_BS(i,j))
-          !str_xx_BS(i,j) = SIGN( MIN( IBS_Re * CS%BS_vel_scale**2, ABS(str_xx_BS(i,j))), str_xx_BS(i,j))
-          !delu_mag(i,j,k) = SQRT( 0.25 * (div_xx(i,j)**2 + sh_xx(i,j)**2 + sh_xy(i,j)**2 + vort_xy(i,j)**2) )
-          !if (delu_mag(i,j,k) > CS%delu_scale(i,j)) then
-          !  Kh(i,j) = MIN(CS%Laplac2_const_xx(i,j) * Shear_mag(i,j), hrat_min(i,j) * CS%Kh_Max_xx(i,j))
-          !endif
+          str_xx_BS(i,j) = -Kh_BS(i,j) * sh_xx(i,j)
         enddo ; enddo
 
         if (CS%id_BS_coeff_h>0) then
@@ -1512,16 +1415,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
         Kh(I,J) = max(Kh(I,J), CS%Kh_bg_min) ! Place a floor on the viscosity, if desired.
 
-!        if (use_MEKE_Ku .and. .not. CS%use_BTBS .and. .not. CS%smooth_BS) then
-!          ! *Add* the MEKE contribution (might be negative)
-!          Kh(I,J) = Kh(I,J) + 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
-!                           (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * meke_res_fn
-!        endif
-        ! define KH_BS? = 0.25* the MEKE%Ku terms as above instead of the line
-        ! above (keep in mind Ku is not just BS so rename to something else)
-        !define str_xy_BS? = -Kh_BS*meke_res_fn*sh_xy
-        !smooth that below
-
         ! Older method of bounding for stability
         if (CS%anisotropic) &
           ! *Add* the shear component of anisotropic viscosity
@@ -1562,62 +1455,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         str_xy(I,J) = -Kh(i,j) * sh_xy(I,J)
       enddo ; enddo
 
-!This is where the smoothing should happen
-!      if (CS%smooth_BS .and. .not. CS%use_BTBS) then
-!        if (CS%res_scale_MEKE) then
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
-!                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-!            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy(I,J)
-!          enddo ; enddo
-!!Inserting new loop for filtered BS:
-!          call smooth_GME(CS, G, GME_flux_q=BS_tempq)
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
-!          enddo ; enddo
-!!End of new loop
-!        else
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
-!                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-!            BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy(I,J)
-!          enddo ; enddo
-!!Inserting new loop for filtered BS:
-!          call smooth_GME(CS, G, GME_flux_q=BS_tempq)
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
-!          enddo ; enddo
-!!End of new loop
-!        endif
-!      endif
-!! Point B insert update of str_xy with BTBS
-!      if (CS%use_BTBS) then
-!        if (CS%res_scale_MEKE) then
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
-!                                 (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-!            BS_tempq(I,J) = - Kh_MEKEtemp * VarMix%Res_fn_q(I,J)*sh_xy_bt(I,J)
-!          enddo ; enddo
-!!Inserting new loop for filtered BS:
-!          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_q=BS_tempq)
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
-!          enddo ; enddo
-!!End of new loop
-!        else
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            Kh_MEKEtemp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + &
- !                                (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
- !           BS_tempq(I,J) =  - Kh_MEKEtemp * sh_xy_bt(I,J)
- !         enddo ; enddo
-!Inserting new loop for filtered BS:
-!          if (CS%smooth_BS) call smooth_GME(CS, G, GME_flux_q=BS_tempq)
-!          do J=js-1,Jeq ; do I=is-1,Ieq
-!            str_xy(I,J) = str_xy(I,J) + BS_tempq(I,J)
-!          enddo ; enddo
-!!End of new loop
-!        endif
-!      endif
     else
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = 0.
@@ -1743,34 +1580,12 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             !       (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
             !       0.5 * sh_xy(I,J)**2 + eps)
             tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
-            ! tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) ) * VarMix%Res_fn_q(I,J) not using res fn for now
           endif
-          !KE = 0.125 * ((u(I,j,k) + u(I,j+1,k))**2 + (v(i,J,k) + v(i+1,J,k))**2)
-          !Kh_BS(i,j) = CS%BS_beta * sqrt(KE * CS%grid_sp_h2(i,j)) * (CS%BS_alpha * grid_Re_Ah(i,j,k) - 1) / (CS%BS_alpha * grid_Re_Ah(i,j,k))
-
-          !Kh_BS(i,j) = SIGN( MIN(ABS(Kh_BS(i,j)), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Kh_Max_xy(i,j)), Kh_BS(i,j))
-
           Kh_BS(I,J) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
-
-!          if (tmp <= -hrat_min(I,J) * CS%Kh_Max_xy(I,J)) then
-!            visc_bound_rem(i,j) = 0.0
-!            Kh_BS(i,j) = -hrat_min(I,J) * CS%Kh_Max_xy(I,J)
-!          elseif (-hrat_min(I,J)*CS%Kh_Max_xy(I,J)<0.) then
-!            visc_bound_rem(I,J) = 1.0 + tmp / (hrat_min(I,J) * CS%Kh_Max_xy(I,J))
-!            Kh_BS(i,j) = tmp
-!          endif
-
         enddo ; enddo
 
          do J=js-1,Jeq ; do I=is-1,Ieq
            str_xy_BS(I,J) = -Kh_BS(I,J) * (sh_xy(I,J))
-!           str_xy_BS(I,J) = SIGN( MIN( CS%BS_Re * ABS(d_str_q(I,J)) , ABS(str_xy_BS(I,J))), str_xy_BS(I,J))
-           !KE = 0.125 * ((u(I,j,k) + u(I,j+1,k))**2 + (v(i,J,k) + v(i+1,J,k))**2)
-           !str_xy_BS(I,J) = SIGN( MIN( IBS_Re * MIN(KE,CS%BS_vel_scale**2), ABS(str_xy_BS(I,J))), str_xy_BS(I,J))
-           !str_xy_BS(I,J) = SIGN( MIN( IBS_Re * CS%BS_vel_scale**2, ABS(str_xy_BS(I,J))), str_xy_BS(I,J))
-           !if (delu_mag(i,j,k) > CS%delu_scale(i,j)) then
-           !  Kh(i,j) = MIN(CS%Laplac2_const_xx(i,j) * Shear_mag(i,j), hrat_min(i,j) * CS%Kh_Max_xy(i,j))
-           !endif
          enddo ; enddo
 
         if (CS%id_BS_coeff_q>0) then
@@ -2065,7 +1880,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   if (CS%bound_Kh_with_MEKE) then
     if (CS%id_BS_coeff_h>0)      call post_data(CS%id_BS_coeff_h, BS_coeff_h, CS%diag)
     if (CS%id_BS_coeff_q>0)      call post_data(CS%id_BS_coeff_q, BS_coeff_q, CS%diag)
-    if (CS%id_delu_scale>0)      call post_data(CS%id_delu_scale, CS%delu_scale, CS%diag)
     if (CS%id_delu_mag>0)      call post_data(CS%id_delu_mag, delu_mag, CS%diag)
   endif
 
@@ -2426,16 +2240,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
                  "sets the kill switch for backscatter. Default is 1.0.", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
-  call get_param(param_file, mdl, "BACKSCATTER_RE", CS%BS_Re, &
-                 "The Reynolds number for the parameterized stress due to backscatter. Should be large "//&
-                 "to avoid the risk of numerical instability.", units="nondim", &
-                 default=100.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
-  call get_param(param_file, mdl, "BACKSCATTER_ALPHA", CS%BS_alpha, &
-                 "---", units="nondim", &
-                 default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
-  call get_param(param_file, mdl, "BACKSCATTER_BETA", CS%BS_beta, &
-                 "---", units="nondim", &
-                 default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "BACKSCATTER_VEL_SCALE", CS%BS_vel_scale, &
                  "The velocity scale used to limit the magnitude of the MEKE backscatter.", &
                  units="nondim", default=0.8, do_not_log=.not.(CS%bound_Kh_with_MEKE))
@@ -2479,15 +2283,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                    units="m2 s-1", scale=US%m_to_L**2*US%T_to_s, default=1.0e7)
   endif
 
-  call get_param(param_file, mdl, "USE_BTBS", CS%use_BTBS, &
-                 "If true, use the MEKE barotropic backscatter scheme.", &
-                 default=.false.)
-  call get_param(param_file, mdl, "SMOOTH_BS", CS%smooth_BS, &
-                 "If true, apply smoothing to backscatter.", &
-                 default=.false.)
-  if (CS%use_BTBS .and. .not. use_MEKE) &
-    call MOM_error(FATAL,"ERROR: USE_MEKE must be true for USE_BTBS ")
-
   if (CS%Laplacian .or. CS%biharmonic) then
     call get_param(param_file, mdl, "DT", dt, &
                  "The (baroclinic) dynamics time step.", units="s", scale=US%s_to_T, &
@@ -2525,7 +2320,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     if (CS%bound_Kh .or. CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
       ALLOC_(CS%Kh_Max_xx(Isd:Ied,Jsd:Jed)) ; CS%Kh_Max_xx(:,:) = 0.0
       ALLOC_(CS%Kh_Max_xy(IsdB:IedB,JsdB:JedB)) ; CS%Kh_Max_xy(:,:) = 0.0
-      ALLOC_(CS%delu_scale(Isd:Ied,Jsd:Jed))
     endif
     if (CS%Smagorinsky_Kh .or. CS%bound_Kh_with_MEKE) then
       ALLOC_(CS%Laplac2_const_xx(isd:ied,jsd:jed))     ; CS%Laplac2_const_xx(:,:) = 0.0
@@ -2680,12 +2474,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     enddo ; enddo
     call min_across_PEs(min_grid_sp_h2)
 
-    if (CS%bound_Kh_with_MEKE) then
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        CS%delu_scale(i,j) = CS%BS_vel_scale / SQRT(CS%grid_sp_h2(i,j))
-      enddo ; enddo
-    endif
-
     ! Calculate and store the background viscosity at q-points
     do J=js-1,Jeq ; do I=is-1,Ieq
       ! Static factors in the Smagorinsky and Leith schemes
@@ -2764,9 +2552,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_Max_xx(i,j) = Ah_Limit * (grid_sp_h2 * grid_sp_h2)
         CS%Ah_bg_xx(i,j) = MIN(CS%Ah_bg_xx(i,j), CS%Ah_Max_xx(i,j))
       endif
-     ! if (CS%bound_Kh_with_MEKE) then
-     !   CS%Ah_Max_xx_KS(i,j) = (grid_sp_h2 * grid_sp_h2 * 0.3) / (CS%KS_timescale*64.0)
-     ! endif
       min_grid_sp_h4 = min(grid_sp_h2**2, min_grid_sp_h4)
     enddo ; enddo
     call min_across_PEs(min_grid_sp_h4)
@@ -2792,9 +2577,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%Ah_Max_xy(I,J) = Ah_Limit * (grid_sp_q2 * grid_sp_q2)
         CS%Ah_bg_xy(I,J) = MIN(CS%Ah_bg_xy(I,J), CS%Ah_Max_xy(I,J))
       endif
-      !if (CS%bound_Kh_with_MEKE) then
-      !  CS%Ah_Max_xy_KS(i,j) = (grid_sp_q2 * grid_sp_q2 * 0.3) / (CS%KS_timescale*64.0)
-      !endif
     enddo ; enddo
   endif
   ! The Laplacian bounds should avoid overshoots when CS%bound_coef < 1.
@@ -3018,8 +2800,6 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     CS%id_sh_xx_h = register_diag_field('ocean_model', 'sh_xx_h', diag%axesTL, Time, &
       'Horizontal tension at h Points', 's-1', conversion=US%s_to_T)
     if (CS%bound_Kh_with_MEKE) then
-      CS%id_delu_scale = register_diag_field('ocean_model', 'delu_scale', diag%axesT1, Time, &
-        'Scaling estimate for velocity gradient norm', 's-1')
       CS%id_delu_mag = register_diag_field('ocean_model', 'delu_mag', diag%axesTL, Time, &
         'Velocity gradient norm', 's-1')
     endif
