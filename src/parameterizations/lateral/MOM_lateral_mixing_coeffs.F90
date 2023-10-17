@@ -485,7 +485,7 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
          "Module must be initialized before it is used.")
 
   call find_eta(h, tv, G, GV, US, e, halo_size=2)
-  call calc_isoneutral_slopes(G, GV, US, h, e, tv, dt*CS%kappa_smooth, CS%use_stanley_iso, &
+  call calc_isoneutral_slopes(G, GV, US, h, e, tv, dt*CS%kappa_smooth, &
                                   CS%slope_x, CS%slope_y, N2_u=N2_u, N2_v=N2_v,dzu=dzu, dzv=dzv, &
                                   dzSxN=dzSxN, dzSyN=dzSyN, halo=1)
 

@@ -1247,7 +1247,11 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
             tmp = MEKE%Ku(i,j)
           endif
-          Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
+          if (VarMix%sqg_expo>0.0) then
+            Kh_BS(i,j) = tmp * ( VarMix%sqg_struct(i,j,k))
+          else
+            Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
+          endif
         enddo ; enddo
 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
