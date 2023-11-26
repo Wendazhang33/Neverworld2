@@ -18,6 +18,7 @@ use MOM_variables,         only : thermo_var_ptrs
 use MOM_verticalGrid,      only : verticalGrid_type
 use MOM_wave_speed,        only : wave_speed, wave_speed_CS, wave_speed_init
 use MOM_open_boundary,     only : ocean_OBC_type, OBC_NONE
+use MOM_MEKE_types,        only : MEKE_type
 
 implicit none ; private
 
@@ -202,13 +203,15 @@ subroutine calc_depth_function(G, CS)
 end subroutine calc_depth_function
 
 !> Calculates and stores the non-dimensional resolution functions
-subroutine calc_resoln_function(h, tv, G, GV, US, CS)
+subroutine calc_resoln_function(h, tv, G, GV, US, CS, MEKE)
   type(ocean_grid_type),                     intent(inout) :: G  !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)    :: GV !< Vertical grid structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: h  !< Layer thickness [H ~> m or kg m-2]
   type(thermo_var_ptrs),                     intent(in)    :: tv !< Thermodynamic variables
   type(unit_scale_type),                     intent(in)    :: US !< A dimensional unit scaling type
   type(VarMix_CS),                           intent(inout) :: CS !< Variable mixing control struct
+  type(MEKE_type),                 optional, intent(in)    :: MEKE !< MEKE fields
+                                                       !! related to Mesoscale Eddy Kinetic Energy.
 
   ! Local variables
   ! Depending on the power-function being used, dimensional rescaling may be limited, so some
@@ -250,7 +253,11 @@ subroutine calc_resoln_function(h, tv, G, GV, US, CS)
   endif
 
   if (CS%sqg_expo>0.0) then
-    call calc_sqg_struct(h, tv, G, GV, US, CS, dt)
+    if (present(MEKE)) then
+      call calc_sqg_struct(h, tv, G, GV, US, CS, dt, MEKE)
+    else
+      call calc_sqg_struct(h, tv, G, GV, US, CS, dt)
+    endif
     call pass_var(CS%sqg_struct, G%Domain)
   endif
 
@@ -452,7 +459,7 @@ subroutine calc_resoln_function(h, tv, G, GV, US, CS)
 end subroutine calc_resoln_function
 
 !> Calculates and stores functions of SQG mode
-subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
+subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt, MEKE)
   type(ocean_grid_type),                     intent(inout) :: G  !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)    :: GV !< Vertical grid structure
   type(unit_scale_type),                     intent(in)    :: US !< A dimensional unit scaling type
@@ -460,6 +467,7 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
   type(thermo_var_ptrs),                    intent(in)     :: tv !<Thermodynamic variables
    real,                                      intent(in)    :: dt !< Time increment [T ~> s]
   type(VarMix_CS),                           intent(inout) :: CS !< Variable mixing control struct
+  type(MEKE_type),                 optional ,intent(in)     :: MEKE !< MEKE fields
 !  type(ocean_OBC_type),                      pointer       :: OBC !< Open
 !  boundaries control structure.
 
@@ -493,16 +501,29 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
     CS%sqg_struct(i,j,1) = 1.0
   enddo ; enddo
   zs(1) = 0.0
-  do j=js,je ; do i=is,ie
-    Le = sqrt(G%areaT(i,j))
-    f = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
-    do k=2,nz
-      N2 = max(0.25*(N2_u(I-1,j,k) + N2_u(I,j,k) + N2_v(i,J-1,k) + N2_v(i,J,k)),0.0)
-      dzc = 0.25*(dzu(I-1,j,k) + dzu(I,j,k) + dzv(i,J-1,k) + dzv(i,J,k))
-      zs(k) = zs(k-1) - N2**0.5/f*dzc
-      CS%sqg_struct(i,j,k) = exp(CS%sqg_expo*zs(k)/Le)
-    enddo
-  enddo ; enddo
+  if (present(MEKE)) then
+    do j=js,je ; do i=is,ie
+      Le =  MEKE%Le(i,j) + 0.001 !sqrt(G%areaT(i,j))
+      f = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
+      do k=2,nz
+        N2 = max(0.25*(N2_u(I-1,j,k) + N2_u(I,j,k) + N2_v(i,J-1,k) + N2_v(i,J,k)),0.0)
+        dzc = 0.25*(dzu(I-1,j,k) + dzu(I,j,k) + dzv(i,J-1,k) + dzv(i,J,k))
+        zs(k) = zs(k-1) - N2**0.5/f*dzc
+        CS%sqg_struct(i,j,k) = exp(CS%sqg_expo*zs(k)/Le)
+      enddo
+    enddo ; enddo
+  else
+    do j=js,je ; do i=is,ie
+      Le =  sqrt(G%areaT(i,j))
+      f = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
+      do k=2,nz
+        N2 = max(0.25*(N2_u(I-1,j,k) + N2_u(I,j,k) + N2_v(i,J-1,k) + N2_v(i,J,k)),0.0)
+        dzc = 0.25*(dzu(I-1,j,k) + dzu(I,j,k) + dzv(i,J-1,k) + dzv(i,J,k))
+        zs(k) = zs(k-1) - N2**0.5/f*dzc
+        CS%sqg_struct(i,j,k) = exp(CS%sqg_expo*zs(k)/Le)
+      enddo
+    enddo ; enddo
+  endif
 
   if (query_averaging_enabled(CS%diag)) then
     if (CS%id_sqg_struct > 0) call post_data(CS%id_sqg_struct, CS%sqg_struct, CS%diag)

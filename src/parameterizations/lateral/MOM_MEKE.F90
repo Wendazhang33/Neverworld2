@@ -332,6 +332,7 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
       call hchksum(barotrFac2, 'MEKE barotrFac2', G%HI)
       call hchksum(LmixScale, 'MEKE LmixScale', G%HI,scale=US%L_to_m)
     endif
+    if (allocated(MEKE%Le)) MEKE%Le = LmixScale
 
     ! Aggregate sources of MEKE (background, frictional and GM)
     !$OMP parallel do default(shared)
@@ -1446,6 +1447,7 @@ logical function MEKE_init(Time, G, US, param_file, diag, CS, MEKE, restart_CS)
   if (allocated(MEKE%Kh)) call create_group_pass(CS%pass_Kh, MEKE%Kh, G%Domain)
   if (allocated(MEKE%Ku)) call create_group_pass(CS%pass_Kh, MEKE%Ku, G%Domain)
   if (allocated(MEKE%Au)) call create_group_pass(CS%pass_Kh, MEKE%Au, G%Domain)
+  if (allocated(MEKE%Le)) call create_group_pass(CS%pass_Kh, MEKE%Le, G%Domain)
 
   if (allocated(MEKE%Kh) .or. allocated(MEKE%Ku) .or. allocated(MEKE%Au)) &
     call do_group_pass(CS%pass_Kh, G%Domain)
@@ -1463,7 +1465,7 @@ subroutine MEKE_alloc_register_restart(HI, param_file, MEKE, restart_CS)
   type(vardesc) :: vd
   real :: MEKE_GMcoeff, MEKE_FrCoeff, MEKE_bhFrCoeff, MEKE_GMECoeff  ! Coefficients for various terms [nondim] !cyc
   real :: MEKE_KHCoeff, MEKE_viscCoeff_Ku, MEKE_viscCoeff_Au  ! Coefficients for various terms [nondim]
-  logical :: Use_KH_in_MEKE
+  logical :: Use_KH_in_MEKE, MEKE_MIN_LSCALE
   logical :: useMEKE
   integer :: isd, ied, jsd, jed
 
@@ -1479,6 +1481,7 @@ subroutine MEKE_alloc_register_restart(HI, param_file, MEKE, restart_CS)
   MEKE_viscCoeff_Ku =0.; call read_param(param_file,"MEKE_VISCOSITY_COEFF_KU",MEKE_viscCoeff_Ku)
   MEKE_viscCoeff_Au =0.; call read_param(param_file,"MEKE_VISCOSITY_COEFF_AU",MEKE_viscCoeff_Au)
   Use_KH_in_MEKE = .false.; call read_param(param_file,"USE_KH_IN_MEKE", Use_KH_in_MEKE)
+  MEKE_MIN_LSCALE = .false.; call read_param(param_file,"MEKE_MIN_LSCALE", MEKE_MIN_LSCALE)
 
   if (.not. useMEKE) return
 
@@ -1498,6 +1501,7 @@ subroutine MEKE_alloc_register_restart(HI, param_file, MEKE, restart_CS)
   if (MEKE_FrCoeff<0.) MEKE_FrCoeff = 0. !cyc
   if (MEKE_bhFrCoeff<0.) MEKE_bhFrCoeff = 0. !cyc
   if (MEKE_GMECoeff>=0.) allocate(MEKE%GME_snk(isd:ied,jsd:jed), source=0.0)
+  if (MEKE_MIN_LSCALE) allocate(MEKE%Le(isd:ied,jsd:jed), source=0.0)
   if (MEKE_KhCoeff>=0.) then
     allocate(MEKE%Kh(isd:ied,jsd:jed), source=0.0)
     vd = var_desc("MEKE_Kh", "m2 s-1", hor_grid='h', z_grid='1', &
@@ -1545,6 +1549,7 @@ subroutine MEKE_end(MEKE)
   if (allocated(MEKE%mom_src_bh)) deallocate(MEKE%mom_src_bh) !cyc
   if (allocated(MEKE%GM_src)) deallocate(MEKE%GM_src)
   if (allocated(MEKE%MEKE)) deallocate(MEKE%MEKE)
+  if (allocated(MEKE%Le)) deallocate(MEKE%Le)
 end subroutine MEKE_end
 
 !> \namespace mom_meke
