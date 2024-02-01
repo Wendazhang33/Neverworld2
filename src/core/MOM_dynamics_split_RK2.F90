@@ -705,7 +705,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 
 ! diffu = horizontal viscosity terms (u_av)
   call cpu_clock_begin(id_clock_horvisc)
-  call horizontal_viscosity(u_av, v_av, h_av, CS%diffu, CS%diffv, &
+  call horizontal_viscosity(u_av, v_av, h_av, uh, vh, CS%diffu, CS%diffv, &
                             MEKE, Varmix, G, GV, US, CS%hor_visc, &
                             OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
                             ADp=CS%ADp)
@@ -1251,7 +1251,7 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
 
   if (.not. query_initialized(CS%diffu,"diffu",restart_CS) .or. &
       .not. query_initialized(CS%diffv,"diffv",restart_CS)) then
-    call horizontal_viscosity(u, v, h, CS%diffu, CS%diffv, MEKE, VarMix, &
+    call horizontal_viscosity(u, v, h, uh, vh, CS%diffu, CS%diffv, MEKE, VarMix, &
                               G, GV, US, CS%hor_visc, &
                               OBC=CS%OBC, BT=CS%barotropic_CSp, &
                               TD=thickness_diffuse_CSp)
