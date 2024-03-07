@@ -220,7 +220,8 @@ type, public :: hor_visc_CS ; private
   integer :: id_vort_xy_q = -1, id_div_xx_h      = -1
   integer :: id_sh_xy_q = -1,    id_sh_xx_h      = -1
   integer :: id_FrictWork = -1, id_FrictWorkIntz = -1, id_Frictflux = -1
-  integer :: id_FrictWork_bh = -1, id_FrictWorkIntz_bh = -1 !cyc
+  integer :: id_FrictWork_bh = -1, id_FrictWorkIntz_bh = -1, id_RoScl = -1 !cyc
+  integer :: id_Sh_F_pow = -1 
   integer :: id_FrictWork_GME = -1
   integer :: id_normstress = -1, id_shearstress = -1
   integer :: id_visc_limit_h = -1, id_visc_limit_q = -1
@@ -378,7 +379,9 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
     GME_coeff_h, &   ! GME coeff. at h-points [L2 T-1 ~> m2 s-1]
     visc_limit_h, &
     visc_limit_h_flag, &
-    visc_limit_h_frac
+    visc_limit_h_frac, &
+    RoSclt, &     ! The scaling function for MEKE source term [nondim]
+    Sh_F_pow  ! The ratio of shear over the absolute value of f raised to some power and rescaled [nondim] 
   real :: AhSm       ! Smagorinsky biharmonic viscosity [L4 T-1 ~> m4 s-1]
   real :: AhLth      ! 2D Leith biharmonic viscosity [L4 T-1 ~> m4 s-1]
   real :: mod_Leith  ! nondimensional coefficient for divergence part of modified Leith
@@ -413,7 +416,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
   real :: DX_dyBu   ! Ratio of zonal over meridiononal grid spacing at vertices [nondim]
   real :: DY_dxCv   ! Ratio of meridional over zonal grid spacing at faces [nondim]
   real :: DX_dyCu   ! Ratio of zonal over meridional grid spacing at faces [nondim]
-  real :: Sh_F_pow  ! The ratio of shear over the absolute value of f raised to some power and rescaled [nondim]
+!  real :: Sh_F_pow  ! The ratio of shear over the absolute value of f raised to some power and rescaled [nondim]
   real :: backscat_subround ! The ratio of f over Shear_mag that is so small that the backscatter
                     ! calculation gives the same value as if f were 0 [nondim].
   real :: H0_GME    ! Depth used to scale down GME coefficient in shallow areas [Z ~> m]
@@ -1746,33 +1749,23 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
              + str_xy(I,J)*(vh(i,J,k)/(h_v(i,J)+h_neglect)*G%IdxCv(i,J)+vh(i+1,J,k)/(h_v(i+1,J)+h_neglect)*G%IdxCv(i+1,J))) &
              -(str_xy(I-1,J-1)*(vh(i,J-1,k)/(h_v(i,J-1)+h_neglect)*G%IdxCv(i,J-1)+vh(i-1,J-1,k)/(h_v(i-1,J-1)+h_neglect)*G%IdxCv(i-1,J-1)) &  
              + str_xy(I-1,J)*(vh(i,J,k)/(h_v(i,J)+h_neglect)*G%IdxCv(i,J)+vh(i-1,J,k)/(h_v(i-1,J)+h_neglect)*G%IdxCv(i-1,J))))*G%IdxT(i,j) )
-     !   +0.25*(((str_xy(I,J)+str_xy(I,J+1))*u(I,j+1,k) - (str_xy(I,J)+str_xy(I,J-1))*u(I,j,k))*0.5*G%IdyBu(I,J) &
-     !         +((str_xy(I+1,J)+str_xy(I,J))*v(i+1,J,k) - (str_xy(I,J)+str_xy(I-1,J))*v(i,J,k))*0.5*G%IdxBu(I,J) &
-     !         +((str_xy(I-1,J)+str_xy(I-1,J-1))*u(I-1,j,k) - (str_xy(I-1,J-1)+str_xy(I-1,J-2))*u(I-1,j-1,k))*0.5*G%IdyBu(I-1,J-1) &
-     !         +((str_xy(I,J-1)+str_xy(I-1,J-1))*v(i,J-1,k) - (str_xy(I-1,J-1)+str_xy(I-2,J-1))*v(i-1,J-1,k))*0.5*G%IdxBu(I-1,J-1) &
-     !         +((str_xy(I-1,J)+str_xy(I-1,J+1))*u(I-1,j+1,k) - (str_xy(I-1,J)+str_xy(I-1,J-1))*u(I-1,j,k))*0.5*G%IdyBu(I-1,J) &
-     !         +((str_xy(I-1,J)+str_xy(I,J))*v(i,J,k) - (str_xy(I-1,J)+str_xy(I-2,J))*v(i-1,J,k))*0.5*G%IdxBu(I-1,J) &
-     !         +((str_xy(I,J)+str_xy(I,J-1))*u(I,j,k) - (str_xy(I,J-1)+str_xy(I,J-2))*u(I,j-1,k))*0.5*G%IdyBu(I,J-1) &
-     !         +((str_xy(I,J-1)+str_xy(I+1,J-1))*v(i+1,J-1,k) - (str_xy(I,J-1)+str_xy(I-1,J-1))*v(i,J-1,k))*0.5*G%IdxBu(I,J-1))) 
-    !          +(str_xy(I-1,J)*(u(I-1,j,k)+u(I-1,j+1,k))*0.5 - str_xy(I-1,J-1)*(u(I-1,j,k)+u(I-1,j-1,k))*0.5)*G%IdyT(i,j) &
-    !          +(str_xy(I,J-1)*(u(I,j-1,k)+u(I,j,k))*0.5 - str_xy(I,J-1)*(u(I,j,k)+u(I,j-1,k))*0.5)*G%IdyT(i,j)
-      ! Diagnose   bhstr_xx*d_x u - bhstr_yy*d_y v + bhstr_xy*(d_y u + d_x v)
+     ! Diagnose   bhstr_xx*d_x u - bhstr_yy*d_y v + bhstr_xy*(d_y u + d_x v)
       ! This is the old formulation that includes energy diffusion !cyc
         FrictWork_bh(i,j,k) = GV%H_to_RZ * ( &
-                (bhstr_xx(i,j) * (u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)    &
-               - bhstr_xx(i,j) * (v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j))   &
-            + 0.25*((bhstr_xy(I,J) *                                  &
-                     ((u(I,j+1,k)-u(I,j,k))*G%IdyBu(I,J)            &
-                    + (v(i+1,J,k)-v(i,J,k))*G%IdxBu(I,J))           &
-                   + bhstr_xy(I-1,J-1) *                            &
-                     ((u(I-1,j,k)-u(I-1,j-1,k))*G%IdyBu(I-1,J-1)    &
-                    + (v(i,J-1,k)-v(i-1,J-1,k))*G%IdxBu(I-1,J-1)) ) &
-                  + (bhstr_xy(I-1,J) *                              &
-                     ((u(I-1,j+1,k)-u(I-1,j,k))*G%IdyBu(I-1,J)      &
-                    + (v(i,J,k)-v(i-1,J,k))*G%IdxBu(I-1,J))         &
-                   + bhstr_xy(I,J-1) *                              &
-                     ((u(I,j,k)-u(I,j-1,k))*G%IdyBu(I,J-1)          &
-                    + (v(i+1,J-1,k)-v(i,J-1,k))*G%IdxBu(I,J-1)) ) ) )
+                (bhstr_xx(i,j)*(uh(I,j,k)/(h_u(I,j)+h_neglect)-uh(I-1,j,k)/(h_u(I-1,j)+h_neglect))*G%IareaT(i,j)    &
+               - bhstr_xx(i,j)*(vh(i,J,k)/(h_v(i,J)+h_neglect)-vh(i,J-1,k)/(h_v(i,J-1)+h_neglect))*G%IareaT(i,j))   &
+            + 0.25*((bhstr_xy(I,J) *(                                  &
+                     (uh(I,j+1,k)/(h_u(I,j+1)+h_neglect)*G%IdyCu(I,j+1)-uh(I,j,k)/(h_u(I,j)+h_neglect)*G%IdyCu(I,j))*G%IdyBu(I,J)             &
+                    +(vh(i+1,J,k)/(h_v(i+1,J)+h_neglect)*G%IdxCv(i+1,J)-vh(i,J,k)/(h_v(i,J)+h_neglect)*G%IdxCv(i,J))*G%IdxBu(I,J))           &
+                   + bhstr_xy(I-1,J-1) *(                            &
+                     (uh(I-1,j,k)/(h_u(I-1,j)+h_neglect)*G%IdyCu(I-1,j)-uh(I-1,j-1,k)/(h_u(I-1,j-1)+h_neglect)*G%IdyCu(I-1,j-1))*G%IdyBu(I-1,J-1)    &
+                    +(vh(i,J-1,k)/(h_v(i,J-1)+h_neglect)*G%IdxCv(i,J-1)-vh(i-1,J-1,k)/(h_v(i-1,J-1)+h_neglect)*G%IdxCv(i-1,J-1))*G%IdxBu(I-1,J-1)) ) &
+                  + (bhstr_xy(I-1,J) *(                              &
+                     (uh(I-1,j+1,k)/(h_u(I-1,j+1)+h_neglect)*G%IdyCu(I-1,j+1)-uh(I-1,j,k)/(h_u(I-1,j)+h_neglect)*G%IdyCu(I-1,j))*G%IdyBu(I-1,J)        &
+                    +(vh(i,J,k)/(h_v(i,J)+h_neglect)*G%IdxCv(i,J)-vh(i-1,J,k)/(h_v(i-1,J)+h_neglect)*G%IdxCv(i-1,J))*G%IdxBu(I-1,J) )         &
+                   + bhstr_xy(I,J-1) *(                              &
+                     (uh(I,j,k)/(h_u(I,j)+h_neglect)*G%IdyCu(I,j)-uh(I,j-1,k)/(h_u(I,j-1)+h_neglect)*G%IdyCu(I,j-1))*G%IdyBu(I,J-1)           &
+                    +(vh(i+1,J-1,k)/(h_v(i+1,J-1)+h_neglect)*G%IdxCv(i+1,J-1)-vh(i,J-1,k)/(h_v(i,J-1)+h_neglect)*G%IdxCv(i,J-1))*G%IdxBu(I,J-1) )) ) )
        endif
     enddo ; enddo ; endif
 
@@ -1832,41 +1825,44 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             if (FatH <= backscat_subround*Shear_mag_bc) then
               RoScl = 1.0
             else
-              Sh_F_pow = MEKE%backscatter_Ro_c * (Shear_mag_bc / FatH)**MEKE%backscatter_Ro_pow
-              RoScl = Sh_F_pow / (1.0 + Sh_F_pow) ! = 1 - f^n/(f^n+c*D^n)
+              Sh_F_pow(i,j,k) = MEKE%backscatter_Ro_c * (Shear_mag_bc / FatH)**MEKE%backscatter_Ro_pow
+              RoScl = Sh_F_pow(i,j,k) / (1.0 + Sh_F_pow(i,j,k)) ! = 1 - f^n/(f^n+c*D^n)
             endif
           endif
-
-          MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + GV%H_to_RZ * ( &
-                ((str_xx(i,j)-RoScl*bhstr_xx(i,j))*(u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)  &
-                -(str_xx(i,j)-RoScl*bhstr_xx(i,j))*(v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j)) &
-         +0.25*(((str_xy(I,J)-RoScl*bhstr_xy(I,J))*(                                  &
-                     (u(I,j+1,k)-u(I,j,k))*G%IdyBu(I,J)                               &
-                    +(v(i+1,J,k)-v(i,J,k))*G%IdxBu(I,J) )                             &
-                +(str_xy(I-1,J-1)-RoScl*bhstr_xy(I-1,J-1))*(                          &
-                     (u(I-1,j,k)-u(I-1,j-1,k))*G%IdyBu(I-1,J-1)                       &
-                    +(v(i,J-1,k)-v(i-1,J-1,k))*G%IdxBu(I-1,J-1) ))                    &
-                +((str_xy(I-1,J)-RoScl*bhstr_xy(I-1,J))*(                             &
-                     (u(I-1,j+1,k)-u(I-1,j,k))*G%IdyBu(I-1,J)                         &
-                    +(v(i,J,k)-v(i-1,J,k))*G%IdxBu(I-1,J) )                           &
-                +(str_xy(I,J-1)-RoScl*bhstr_xy(I,J-1))*(                              &
-                     (u(I,j,k)-u(I,j-1,k))*G%IdyBu(I,J-1)                             &
-                    +(v(i+1,J-1,k)-v(i,J-1,k))*G%IdxBu(I,J-1) )) ) )
-          MEKE%mom_src_bh(i,j) = MEKE%mom_src_bh(i,j) + GV%H_to_RZ * ( & !cyc
-                ((bhstr_xx(i,j)-RoScl*bhstr_xx(i,j))*(u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)  &
-                -(bhstr_xx(i,j)-RoScl*bhstr_xx(i,j))*(v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j)) &
-              + 0.25*(((bhstr_xy(I,J)-RoScl*bhstr_xy(I,J)) *                            &
-                       ((u(I,j+1,k)-u(I,j,k))*G%IdyBu(I,J)                              &
-                      + (v(i+1,J,k)-v(i,J,k))*G%IdxBu(I,J) )                            &
-                     + (bhstr_xy(I-1,J-1)-RoScl*bhstr_xy(I-1,J-1)) *                    &
-                       ((u(I-1,j,k)-u(I-1,j-1,k))*G%IdyBu(I-1,J-1)                      &
-                      + (v(i,J-1,k)-v(i-1,J-1,k))*G%IdxBu(I-1,J-1)) )                   &
-                    + ((bhstr_xy(I-1,J)-RoScl*bhstr_xy(I-1,J)) *                        &
-                       ((u(I-1,j+1,k)-u(I-1,j,k))*G%IdyBu(I-1,J)                        &
-                      + (v(i,J,k)-v(i-1,J,k))*G%IdxBu(I-1,J))                           &
-                     + (bhstr_xy(I,J-1)-RoScl*bhstr_xy(I,J-1)) *                        &
-                       ((u(I,j,k)-u(I,j-1,k))*G%IdyBu(I,J-1)                            &
-                      + (v(i+1,J-1,k)-v(i,J-1,k))*G%IdxBu(I,J-1)) ) ) )
+          
+          RoSclt(i,j,k) = RoScl
+          MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + FrictWork(i,j,k) - RoScl*FrictWork_bh(i,j,k)
+          MEKE%mom_src_bh(i,j) = MEKE%mom_src_bh(i,j) + FrictWork_bh(i,j,k) - RoScl*FrictWork_bh(i,j,k)
+       !   MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + GV%H_to_RZ * ( &
+       !         ((str_xx(i,j)-RoScl*bhstr_xx(i,j))*(u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)  &
+       !         -(str_xx(i,j)-RoScl*bhstr_xx(i,j))*(v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j)) &
+       !  +0.25*(((str_xy(I,J)-RoScl*bhstr_xy(I,J))*(                                  &
+       !              (u(I,j+1,k)-u(I,j,k))*G%IdyBu(I,J)                               &
+       !             +(v(i+1,J,k)-v(i,J,k))*G%IdxBu(I,J) )                             &
+       !         +(str_xy(I-1,J-1)-RoScl*bhstr_xy(I-1,J-1))*(                          &
+       !              (u(I-1,j,k)-u(I-1,j-1,k))*G%IdyBu(I-1,J-1)                       &
+       !             +(v(i,J-1,k)-v(i-1,J-1,k))*G%IdxBu(I-1,J-1) ))                    &
+       !         +((str_xy(I-1,J)-RoScl*bhstr_xy(I-1,J))*(                             &
+       !              (u(I-1,j+1,k)-u(I-1,j,k))*G%IdyBu(I-1,J)                         &
+       !             +(v(i,J,k)-v(i-1,J,k))*G%IdxBu(I-1,J) )                           &
+       !         +(str_xy(I,J-1)-RoScl*bhstr_xy(I,J-1))*(                              &
+       !              (u(I,j,k)-u(I,j-1,k))*G%IdyBu(I,J-1)                             &
+       !             +(v(i+1,J-1,k)-v(i,J-1,k))*G%IdxBu(I,J-1) )) ) )
+       !   MEKE%mom_src_bh(i,j) = MEKE%mom_src_bh(i,j) + GV%H_to_RZ * ( & !cyc
+       !         ((bhstr_xx(i,j)-RoScl*bhstr_xx(i,j))*(u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)  &
+       !         -(bhstr_xx(i,j)-RoScl*bhstr_xx(i,j))*(v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j)) &
+       !       + 0.25*(((bhstr_xy(I,J)-RoScl*bhstr_xy(I,J)) *                            &
+       !                ((u(I,j+1,k)-u(I,j,k))*G%IdyBu(I,J)                              &
+       !               + (v(i+1,J,k)-v(i,J,k))*G%IdxBu(I,J) )                            &
+        !             + (bhstr_xy(I-1,J-1)-RoScl*bhstr_xy(I-1,J-1)) *                    &
+        !               ((u(I-1,j,k)-u(I-1,j-1,k))*G%IdyBu(I-1,J-1)                      &
+        !              + (v(i,J-1,k)-v(i-1,J-1,k))*G%IdxBu(I-1,J-1)) )                   &
+        !            + ((bhstr_xy(I-1,J)-RoScl*bhstr_xy(I-1,J)) *                        &
+        !               ((u(I-1,j+1,k)-u(I-1,j,k))*G%IdyBu(I-1,J)                        &
+        !              + (v(i,J,k)-v(i-1,J,k))*G%IdxBu(I-1,J))                           &
+        !             + (bhstr_xy(I,J-1)-RoScl*bhstr_xy(I,J-1)) *                        &
+        !               ((u(I,j,k)-u(I,j-1,k))*G%IdyBu(I,J-1)                            &
+        !              + (v(i+1,J-1,k)-v(i,J-1,k))*G%IdxBu(I,J-1)) ) ) )
         enddo ; enddo
       else !cyc
 
@@ -1895,6 +1891,10 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
   if (CS%id_FrictWork>0) call post_data(CS%id_FrictWork, FrictWork, CS%diag)
   if (CS%id_Frictflux>0) call post_data(CS%id_Frictflux, Frictflux, CS%diag)  
   if (CS%id_FrictWork_bh>0) call post_data(CS%id_FrictWork_bh, FrictWork_bh, CS%diag) !cyc
+  if (CS%id_RoScl>0) call post_data(CS%id_RoScl, RoSclt, CS%diag)
+!  if (CS%id_Shear_mag_bc>0) call post_data(CS%id_Shear_mag_bc, Shear_mag_bc, CS%diag)
+!  if (CS%id_FatH>0) call post_data(CS%id_FatH, FatH, CS%diag)
+  if (CS%id_Sh_F_pow>0) call post_data(CS%id_Sh_F_pow, Sh_F_pow, CS%diag)
   if (CS%id_FrictWork_GME>0) call post_data(CS%id_FrictWork_GME, FrictWork_GME, CS%diag)
   if (CS%id_Ah_h>0)      call post_data(CS%id_Ah_h, Ah_h, CS%diag)
   if (CS%id_grid_Re_Ah>0) call post_data(CS%id_grid_Re_Ah, grid_Re_Ah, CS%diag)
@@ -2893,6 +2893,18 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   CS%id_FrictWork_bh = register_diag_field('ocean_model','FrictWork_bh',diag%axesTL,Time,&
       'Integral work done by the biharmonic lateral friction terms.', &
       'W m-2', conversion=US%RZ3_T3_to_W_m2*US%L_to_Z**2) !cyc
+  CS%id_RoScl = register_diag_field('ocean_model','RoScl',diag%axesTL,Time,&
+      'Rossby number function for MEKE source', &
+      'nondim')
+!  CS%id_Shear_mag_bc = register_diag_field('ocean_model','Shear_mag_bc',diag%axesTL,Time,&
+!      'Shear magnitude', &
+!      's-1', conversion=US%s_to_T)
+!  CS%id_FatH = register_diag_field('ocean_model','FatH',diag%axesTL,Time,&
+!      'Coriolis parameter magnitude', &
+!      's-1', conversion=US%s_to_T)
+  CS%id_Sh_F_pow = register_diag_field('ocean_model','Sh_F_pow',diag%axesTL,Time,&
+      'Deformation rate over Coriolis parameter', &
+      'nondim')
   CS%id_FrictWorkIntz_bh = register_diag_field('ocean_model','FrictWorkIntz_bh',diag%axesT1,Time,&
       'Depth integrated work done by the biharmonic lateral friction', &
       'W m-2', conversion=US%RZ3_T3_to_W_m2*US%L_to_Z**2) !cyc
