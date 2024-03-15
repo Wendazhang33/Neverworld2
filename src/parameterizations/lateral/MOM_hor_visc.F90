@@ -66,6 +66,8 @@ type, public :: hor_visc_CS ; private
                              !! The default is 1.0.
   real    :: KS_coef         !! A nondimensional coefficient on the biharmonic viscosity that sets the kill
                              !< switch for backscatter. Default is 1.0.
+  real    :: KS_thick         !! Layer thickness threshold that sets the kill
+                             !< switch for backscatter. Default is 1.0.
   real    :: KS_timescale    !! A timescale for computing CFL limit for turning off backscatter (~DT)
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
   real    :: BS_vel_scale    !< The velocity scale used to limit the magnitude of the MEKE backscatter.
@@ -1212,7 +1214,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             tmp = CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j)
             visc_limit_h(i,j,k) = tmp
             visc_limit_h_frac(i,j,k) = Ah(i,j) / (CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xx_KS(i,j))
-            if (Ah(i,j) >= tmp) then
+            if ((Ah(i,j) >= tmp) .or. (h(i,j,k) <= CS%KS_thick)) then
               visc_limit_h_flag(i,j,k) = 1.
             endif
           enddo ; enddo
@@ -1557,7 +1559,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             tmp = CS%KS_coef *hrat_min(I,J) * CS%Ah_Max_xy_KS(I,J)
             visc_limit_q(I,J,k) = tmp
             visc_limit_q_frac(i,j,k) = Ah(i,j) / (CS%KS_coef * hrat_min(i,j) * CS%Ah_Max_xy_KS(i,j))
-            if (Ah(I,J) >= tmp) then
+            if ((Ah(I,J) >= tmp) .or. (h(i,j,k)<=CS%KS_thick)) then
               visc_limit_q_flag(I,J,k) = 1.
             endif
           enddo ; enddo
@@ -2278,6 +2280,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
                  "sets the kill switch for backscatter. Default is 1.0.", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "KILL_SWITCH_THICK", CS%KS_thick, &
+                 "The layer thickness threshold that"// &
+                 "sets the kill switch for backscatter. Default is 0.01.", units="m", &
+                 default=0.01, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "BACKSCATTER_VEL_SCALE", CS%BS_vel_scale, &
                  "The velocity scale used to limit the magnitude of the MEKE backscatter.", &
                  units="nondim", default=0.8, do_not_log=.not.(CS%bound_Kh_with_MEKE))
