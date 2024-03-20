@@ -230,6 +230,7 @@ type, public :: hor_visc_CS ; private
   integer :: id_visc_limit_h_flag = -1, id_visc_limit_q_flag = -1
   integer :: id_visc_limit_h_frac = -1, id_visc_limit_q_frac = -1
   integer :: id_BS_coeff_h = -1, id_BS_coeff_q = -1
+  integer :: id_Kh_max_h = -1, id_Kh_max_q = -1
   integer :: id_delu_mag
   !>@}
 
@@ -358,7 +359,8 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
     visc_limit_q_flag, &
     visc_limit_q_frac, &
     ShSt, &      ! A diagnostic array of shear stress [T-1 ~> s-1].
-    BS_coeff_q   ! A diagnostic array of the backscatter coefficient [L2 T-1 ~> m2 s-1]
+    BS_coeff_q, &   ! A diagnostic array of the backscatter coefficient [L2 T-1 ~> m2 s-1]
+    Kh_max_q     ! The maximum magnitude of Laplacian viscosity at q point [L2 T-1 ~> m2 s-1]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1) :: &
     KH_u_GME  !< interface height diffusivities in u-columns [L2 T-1 ~> m2 s-1]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1) :: &
@@ -374,7 +376,8 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
     sh_xx_h,       & ! horizontal tension (du/dx - dv/dy) including metric terms [T-1 ~> s-1]
     NoSt, &          ! A diagnostic array of normal stress [T-1 ~> s-1].
     BS_coeff_h, &   ! A diagnostic array of the backscatter coefficient [L2 T-1 ~> m2 s-1]
-    delu_mag
+    delu_mag,   &
+    Kh_max_h        ! The maximum magnitude of Laplacian viscosity at h point [L2 T-1 ~> m2 s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)) :: &
     grid_Re_Kh, &    ! Grid Reynolds number for Laplacian horizontal viscosity at h points [nondim]
     grid_Re_Ah, &    ! Grid Reynolds number for Biharmonic horizontal viscosity at h points [nondim]
@@ -1260,9 +1263,9 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             tmp = MEKE%Ku(i,j)
           endif
           if (VarMix%sqg_expo>0.0) then
-            Kh_BS(i,j) = tmp * ( VarMix%sqg_struct(i,j,k))
+            Kh_BS(i,j) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
           else
-            Kh_BS(i,j) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
+            Kh_BS(i,j) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
           endif
         enddo ; enddo
 
@@ -1275,7 +1278,11 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             BS_coeff_h(i,j,k) = Kh_BS(i,j)
           enddo ; enddo
         endif
-
+        if (CS%id_Kh_max_h>0) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            Kh_max_h(i,j,k) = hrat_min(i,j) * CS%Kh_Max_xx(i,j)
+          enddo ; enddo
+        endif
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = str_xx(i,j) + str_xx_BS(i,j)
       enddo ; enddo
@@ -1598,9 +1605,9 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
           endif
           if (VarMix%sqg_expo>0.0) then
-            Kh_BS(I,J) = tmp * ( VarMix%sqg_struct(i,j,k))
+            Kh_BS(I,J) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
           else
-            Kh_BS(I,J) = tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power))
+            Kh_BS(I,J) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
           endif
         enddo ; enddo
 
@@ -1611,6 +1618,11 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
         if (CS%id_BS_coeff_q>0) then
           do J=js-1,Jeq ; do I=is-1,Ieq
             BS_coeff_q(I,J,k) = Kh_BS(I,J)
+          enddo ; enddo
+        endif
+        if (CS%id_Kh_max_q>0) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh_max_q(I,J,k) = hrat_min(I,J) * CS%Kh_Max_xy(I,J)
           enddo ; enddo
         endif
 
@@ -1922,6 +1934,8 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
     if (CS%id_BS_coeff_q>0)      call post_data(CS%id_BS_coeff_q, BS_coeff_q, CS%diag)
     if (CS%id_delu_mag>0)      call post_data(CS%id_delu_mag, delu_mag, CS%diag)
   endif
+  if (CS%id_Kh_max_h>0)      call post_data(CS%id_Kh_max_h, Kh_max_h, CS%diag)
+  if (CS%id_Kh_max_q>0)      call post_data(CS%id_Kh_max_q, Kh_max_q, CS%diag)
 
   if (CS%debug) then
     if (CS%Laplacian) then
@@ -2881,7 +2895,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     CS%id_BS_coeff_q = register_diag_field('ocean_model', 'BS_coeff_q', diag%axesBL, Time, &
         'Backscatter coefficient at q points', 'm2 s-1')
   endif
-
+  CS%id_Kh_max_h = register_diag_field('ocean_model', 'Kh_max_h', diag%axesTL, Time, &
+        'Maximum magnitude of Laplacian viscosity at h points', 'm2 s-1')
+  CS%id_Kh_max_q = register_diag_field('ocean_model', 'Kh_max_q', diag%axesBL, Time, &
+        'Maximum magnitude of Laplacian viscosity at q points', 'm2 s-1')
   CS%id_FrictWork = register_diag_field('ocean_model','FrictWork',diag%axesTL,Time,&
       'Integral work done by lateral friction terms. If GME is turned on, this '//&
       'includes the GME contribution.', &
