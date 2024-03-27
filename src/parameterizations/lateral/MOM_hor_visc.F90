@@ -49,6 +49,7 @@ type, public :: hor_visc_CS ; private
                              !! Laplacian viscosity to guarantee stability.
   logical :: bound_Kh_with_MEKE !! If true, bounds the Laplacian viscosity using an expression
                              !< that is proportional to the EKE.
+  logical :: use_3dMEKE      ! Use the 3D MEKE for Ku
   logical :: bound_Ah        !< If true, the biharmonic coefficient is locally
                              !! limited to guarantee stability.
   logical :: better_bound_Ah !< If true, use a more careful bounding of the
@@ -1267,6 +1268,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
           else
             Kh_BS(i,j) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
           endif
+          if (CS%use_3dMEKE) Kh_BS(i,j) = max(tmp * ( MEKE%diff_struct(i,j,k)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
         enddo ; enddo
 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1556,7 +1558,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
         else
           do J=js-1,Jeq ; do I=is-1,Ieq
             Ah(I,J) = min(Ah(i,j), hrat_min(I,J) * CS%Ah_Max_xy(I,J))
-          enddo ; enddo
+          enddo ; enddo 
         endif
       endif
 
@@ -1609,6 +1611,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
           else
             Kh_BS(I,J) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
           endif
+          if (CS%use_3dMEKE) Kh_BS(I,J) = max(tmp * ( MEKE%diff_struct(i,j,k)),  -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
         enddo ; enddo
 
          do J=js-1,Jeq ; do I=is-1,Ieq
@@ -1808,17 +1811,16 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
     ! the vertically integrated MEKE source term, and adjusting for any
     ! energy loss seen as a reduction in the (biharmonic) frictional source term.
     if (find_FrictWork .and. allocated(MEKE%mom_src)) then
-      if (k==1) then
+      do j=js,je ; do i=is,ie
+        MEKE%mom_src(i,j,k) = 0.
+        MEKE%mom_src_bh(i,j,k) = 0. !cyc
+      enddo ; enddo
+      if (allocated(MEKE%GME_snk)) then
         do j=js,je ; do i=is,ie
-          MEKE%mom_src(i,j) = 0.
-          MEKE%mom_src_bh(i,j) = 0. !cyc
+          MEKE%GME_snk(i,j,k) = 0.
         enddo ; enddo
-        if (allocated(MEKE%GME_snk)) then
-          do j=js,je ; do i=is,ie
-            MEKE%GME_snk(i,j) = 0.
-          enddo ; enddo
-        endif
       endif
+     
       if (MEKE%backscatter_Ro_c /= 0.) then
         do j=js,je ; do i=is,ie
           FatH = 0.25*( (abs(G%CoriolisBu(I-1,J-1)) + abs(G%CoriolisBu(I,J))) + &
@@ -1845,8 +1847,8 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
           endif
           
           RoSclt(i,j,k) = RoScl
-          MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + FrictWork(i,j,k) - RoScl*FrictWork_bh(i,j,k)
-          MEKE%mom_src_bh(i,j) = MEKE%mom_src_bh(i,j) + FrictWork_bh(i,j,k) - RoScl*FrictWork_bh(i,j,k)
+          MEKE%mom_src(i,j,k) = MEKE%mom_src(i,j,k) + FrictWork(i,j,k) - RoScl*FrictWork_bh(i,j,k)
+          MEKE%mom_src_bh(i,j,k) = MEKE%mom_src_bh(i,j,k) + FrictWork_bh(i,j,k) - RoScl*FrictWork_bh(i,j,k)
        !   MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + GV%H_to_RZ * ( &
        !         ((str_xx(i,j)-RoScl*bhstr_xx(i,j))*(u(I,j,k)-u(I-1,j,k))*G%IdxT(i,j)  &
        !         -(str_xx(i,j)-RoScl*bhstr_xx(i,j))*(v(i,J,k)-v(i,J-1,k))*G%IdyT(i,j)) &
@@ -1881,15 +1883,15 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
       else !cyc
 
       do j=js,je ; do i=is,ie
-        MEKE%mom_src(i,j) = MEKE%mom_src(i,j) + FrictWork(i,j,k)
-        MEKE%mom_src_bh(i,j) = MEKE%mom_src_bh(i,j) + FrictWork_bh(i,j,k) !cyc
+        MEKE%mom_src(i,j,k) = MEKE%mom_src(i,j,k) + FrictWork(i,j,k)
+        MEKE%mom_src_bh(i,j,k) = MEKE%mom_src_bh(i,j,k) + FrictWork_bh(i,j,k) !cyc
       enddo ; enddo
       endif ! MEKE%backscatter_Ro_c
 
 
       if (CS%use_GME .and. allocated(MEKE%GME_snk)) then
         do j=js,je ; do i=is,ie
-          MEKE%GME_snk(i,j) = MEKE%GME_snk(i,j) + FrictWork_GME(i,j,k)
+          MEKE%GME_snk(i,j,k) = MEKE%GME_snk(i,j,k) + FrictWork_GME(i,j,k)
         enddo ; enddo
       endif
 
@@ -2142,6 +2144,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   call get_param(param_file, mdl, "BOUND_KH_WITH_MEKE", CS%bound_Kh_with_MEKE, &
                  "If true, bounds the Laplacian viscosity using an expression "//&
                  "that is proportional to the EKE. ", &
+                 default=.false., do_not_log=.not.CS%Laplacian)
+  call get_param(param_file, mdl, "USE_3DMEKE", CS%use_3dMEKE, &
+                 "If true, use the 3D MEKE for diffusivities ", &
                  default=.false., do_not_log=.not.CS%Laplacian)
   if (.not.CS%Laplacian) CS%bound_Kh = .false.
   if (.not.CS%Laplacian) CS%better_bound_Kh = .false.

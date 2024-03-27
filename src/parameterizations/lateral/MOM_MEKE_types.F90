@@ -8,12 +8,14 @@ implicit none ; private
 type, public :: MEKE_type
   ! Variables
   real, allocatable :: MEKE(:,:)    !< Vertically averaged eddy kinetic energy [L2 T-2 ~> m2 s-2].
+  real, allocatable :: LMEKE(:,:,:) ! Layerwise eddy kinetic energy [L2 T-2 ~> m2 s-2]
   real, allocatable :: GM_src(:,:)  !< MEKE source due to thickness mixing (GM) [R Z L2 T-3 ~> W m-2].
-  real, allocatable :: mom_src(:,:) !< MEKE source from lateral friction in the
+  real, allocatable :: mom_src(:,:,:) !< MEKE source from lateral friction in the
                                     !! momentum equations [R Z L2 T-3 ~> W m-2].
-  real, allocatable :: mom_src_bh(:,:) !< MEKE source from the biharmonic part of the lateral friction in the
+  real, allocatable :: mom_src_bh(:,:,:) !< MEKE source from the biharmonic part of the lateral friction in the
                                     !! momentum equations [R Z L2 T-3 ~> W m-2]. !cyc
-  real, allocatable :: GME_snk(:,:) !< MEKE sink from GME backscatter in the momentum equations [R Z L2 T-3 ~> W m-2].
+  real, allocatable :: GME_snk(:,:,:) !< MEKE sink from GME backscatter in the momentum equations [R Z L2 T-3 ~> W m-2].
+  real, allocatable :: diff_struct(:,:,:)  !! Vertical structure of MEKE diffusivities based on layerwise MEKE
   real, allocatable :: Kh(:,:)      !< The MEKE-derived lateral mixing coefficient [L2 T-1 ~> m2 s-1].
   real, allocatable :: Kh_diff(:,:) !< Uses the non-MEKE-derived thickness diffusion coefficient to diffuse
                                     !! MEKE [L2 T-1 ~> m2 s-1].
