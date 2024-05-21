@@ -71,6 +71,8 @@ type, public :: hor_visc_CS ; private
                              !< switch for backscatter. Default is 1.0.
   real    :: KS_timescale    !! A timescale for computing CFL limit for turning off backscatter (~DT)
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
+  real    :: hrat_power       !! Power to raise hrat_min that applied to backscatter. Default 0.0.
+  real    :: meke_q_coef       !! Coefficient to multiply by the MEKE source at q point. Default 0.0.
   real    :: BS_vel_scale    !< The velocity scale used to limit the magnitude of the MEKE backscatter.
   logical :: Smagorinsky_Kh  !< If true, use Smagorinsky nonlinear eddy
                              !! viscosity. KH is the background value.
@@ -1262,7 +1264,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             !tmp = -2.0 * CS%bound_Kh_with_MEKE_coef * MEKE%MEKE(i,j) / &
             !       SQRT( 0.5*(div_xx(i,j)**2 + sh_xx(i,j)**2) + &
             !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
-            tmp = MEKE%Ku(i,j)
+            tmp = MEKE%Ku(i,j)*hrat_min(i,j)**CS%hrat_power
           endif
           if (VarMix%sqg_expo>0.0) then
             Kh_BS(i,j) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
@@ -1605,7 +1607,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             !       SQRT( 0.5 * ( (0.25*( (div_xx(i,j)+div_xx(i+1,j+1)) + (div_xx(i+1,j)+div_xx(i,j+1)) )  )**2 + &
             !       (0.25*( (sh_xx(i,j)+sh_xx(i+1,j+1)) + (sh_xx(i+1,j)+sh_xx(i,j+1)) )  )**2) + &
             !       0.5 * sh_xy(I,J)**2 + eps)
-            tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )
+            tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )*hrat_min(I,J)**CS%hrat_power*CS%meke_q_coef
           endif
           if (VarMix%sqg_expo>0.0) then
             Kh_BS(I,J) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
@@ -2321,6 +2323,12 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "EBT_POWER", CS%EBT_power, &
                  "Power to raise EBT vertical structure to", units="nondim", &
+                 default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "HRAT_POWER", CS%hrat_power, &
+                 "Power to raise EBT vertical structure to", units="nondim", &
+                 default=0.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "MEKE_q_coef", CS%meke_q_coef, &
+                 "Coefficient to multiply by the MEKE source at q point", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "KILL_SWITCH_COEF", CS%KS_coef, &
                  "A nondimensional coefficient on the biharmonic viscosity that "// &
