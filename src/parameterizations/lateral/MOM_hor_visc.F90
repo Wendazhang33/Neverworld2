@@ -73,6 +73,7 @@ type, public :: hor_visc_CS ; private
   real    :: EBT_power       !! Power to raise EBT vertical structure to. Default 1.0.
   real    :: hrat_power       !! Power to raise hrat_min that applied to backscatter. Default 0.0.
   real    :: meke_q_coef       !! Coefficient to multiply by the MEKE source at q point. Default 0.0.
+  real    :: BSsm_coeff       !! Coefficient to multiply by the Smagorinsky limiter for backscatter. Default 0.0.
   real    :: BS_vel_scale    !< The velocity scale used to limit the magnitude of the MEKE backscatter.
   logical :: Smagorinsky_Kh  !< If true, use Smagorinsky nonlinear eddy
                              !! viscosity. KH is the background value.
@@ -161,7 +162,8 @@ type, public :: hor_visc_CS ; private
     Ah_Max_xy,      & !< The maximum permitted biharmonic viscosity [L4 T-1 ~> m4 s-1].
     Ah_Max_xy_KS,   & !< The maximum permitted biharmonic viscosity for kill switch [L4 T-1 ~> m4 s-1].
     n1n2_q,         & !< Factor n1*n2 in the anisotropic direction tensor at q-points
-    n1n1_m_n2n2_q     !< Factor n1**2-n2**2 in the anisotropic direction tensor at q-points
+    n1n1_m_n2n2_q,  &   !< Factor n1**2-n2**2 in the anisotropic direction tensor at q-points
+    grid_sp_q2      !< Harmonic mean of the squares of the grid [L2 ~> m2]
 
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
     dx2h,   & !< Pre-calculated dx^2 at h points [L2 ~> m2]
@@ -439,6 +441,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
   real :: grid_Ah   ! Biharmonic viscosity bound by grid [L4 T-1 ~> m4 s-1]
   real :: MEKE_bound ! The theoretical maximum value of viscosity or backscatter coefficients, based on the EKE
   real :: Kh_Max_temp ! Dummy variable for Kh_Max
+  real :: Kh_BS_max   ! Maximum for Kh_BS [L2 T-1 ~> m2 s-1]
   real :: eps       ! A small value for avoiding divide by zero errors.
 
   logical :: rescale_Kh, legacy_bound
@@ -1266,12 +1269,17 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             !       0.5* (0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) ) )**2 + eps)
             tmp = MEKE%Ku(i,j)*hrat_min(i,j)**CS%hrat_power
           endif
-          if (VarMix%sqg_expo>0.0) then
-            Kh_BS(i,j) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
+          if (CS%BSsm_coeff > 0) then
+            Kh_BS_max = -hrat_min(i,j)**CS%hrat_power * min(CS%grid_sp_h2(i,j) * Shear_mag(i,j) * CS%BSsm_coeff, CS%Kh_Max_xx(i,j))
           else
-            Kh_BS(i,j) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
+            Kh_BS_max = -hrat_min(i,j)**CS%hrat_power *  CS%Kh_Max_xx(i,j)
           endif
-          if (CS%use_3dMEKE) Kh_BS(i,j) = max(tmp * ( MEKE%diff_struct(i,j,k)), -hrat_min(i,j) * CS%Kh_Max_xx(i,j))
+          if (VarMix%sqg_expo>0.0) then
+            Kh_BS(i,j) = max(tmp * ( VarMix%sqg_struct(i,j,k)), Kh_BS_max)
+          else
+            Kh_BS(i,j) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), Kh_BS_max)
+          endif
+          if (CS%use_3dMEKE) Kh_BS(i,j) = max(tmp * ( MEKE%diff_struct(i,j,k)), Kh_BS_max)
         enddo ; enddo
 
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1609,12 +1617,17 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
             !       0.5 * sh_xy(I,J)**2 + eps)
             tmp = 0.25*( (MEKE%Ku(i,j) + MEKE%Ku(i+1,j+1)) + (MEKE%Ku(i+1,j) + MEKE%Ku(i,j+1)) )*hrat_min(I,J)**CS%hrat_power*CS%meke_q_coef
           endif
-          if (VarMix%sqg_expo>0.0) then
-            Kh_BS(I,J) = max(tmp * ( VarMix%sqg_struct(i,j,k)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
+          if (CS%BSsm_coeff > 0) then
+            Kh_BS_max = -hrat_min(I,J)**CS%hrat_power * min(CS%grid_sp_q2(I,J) * Shear_mag(i,j)*CS%BSsm_coeff, CS%Kh_Max_xy(I,J))
           else
-            Kh_BS(I,J) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
+            Kh_BS_max = -hrat_min(I,J)**CS%hrat_power * CS%Kh_Max_xy(I,J)
           endif
-          if (CS%use_3dMEKE) Kh_BS(I,J) = max(tmp * ( MEKE%diff_struct(i,j,k)),  -hrat_min(I,J)*CS%Kh_Max_xy(I,J))
+          if (VarMix%sqg_expo>0.0) then
+            Kh_BS(I,J) = max(tmp * ( VarMix%sqg_struct(i,j,k)), Kh_BS_max)
+          else
+            Kh_BS(I,J) = max(tmp * ( VarMix%ebt_struct(i,j,k)**(CS%EBT_power)), Kh_BS_max)
+          endif
+          if (CS%use_3dMEKE) Kh_BS(I,J) = max(tmp * ( MEKE%diff_struct(i,j,k)),  Kh_BS_max)
         enddo ; enddo
 
          do J=js-1,Jeq ; do I=is-1,Ieq
@@ -2327,6 +2340,9 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   call get_param(param_file, mdl, "HRAT_POWER", CS%hrat_power, &
                  "Power to raise EBT vertical structure to", units="nondim", &
                  default=0.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
+  call get_param(param_file, mdl, "BS_SM_coeff", CS%BSsm_coeff, &
+                 "Coefficient to multiply by the Smagorinsky backscatter limiter", units="nondim", &
+                 default=0.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
   call get_param(param_file, mdl, "MEKE_q_coef", CS%meke_q_coef, &
                  "Coefficient to multiply by the MEKE source at q point", units="nondim", &
                  default=1.0, do_not_log=.not.(CS%bound_Kh_with_MEKE))
@@ -2413,6 +2429,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   ALLOC_(CS%dy_dxBu(IsdB:IedB,JsdB:JedB)) ; CS%dy_dxBu(:,:) = 0.0
   if (CS%Laplacian) then
     ALLOC_(CS%grid_sp_h2(isd:ied,jsd:jed))   ; CS%grid_sp_h2(:,:) = 0.0
+    ALLOC_(CS%grid_sp_q2(IsdB:IedB,JsdB:JedB))   ; CS%grid_sp_q2(:,:) = 0.0
     ALLOC_(CS%Kh_bg_xx(isd:ied,jsd:jed))     ; CS%Kh_bg_xx(:,:) = 0.0
     ALLOC_(CS%Kh_bg_xy(IsdB:IedB,JsdB:JedB)) ; CS%Kh_bg_xy(:,:) = 0.0
     if (CS%bound_Kh .or. CS%better_bound_Kh .or. CS%bound_Kh_with_MEKE) then
@@ -2576,6 +2593,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
     do J=js-1,Jeq ; do I=is-1,Ieq
       ! Static factors in the Smagorinsky and Leith schemes
       grid_sp_q2 = (2.0*CS%dx2q(I,J)*CS%dy2q(I,J)) / (CS%dx2q(I,J) + CS%dy2q(I,J))
+      CS%grid_sp_q2(I,J) = grid_sp_q2
       grid_sp_q3 = grid_sp_q2*sqrt(grid_sp_q2)
       if (CS%Smagorinsky_Kh) CS%Laplac2_const_xy(I,J) = Smag_Lap_const * grid_sp_q2
       if (CS%Leith_Kh)       CS%Laplac3_const_xy(I,J) = Leith_Lap_const * grid_sp_q3
@@ -3074,6 +3092,7 @@ subroutine hor_visc_end(CS)
   if (CS%Laplacian) then
     DEALLOC_(CS%Kh_bg_xx) ; DEALLOC_(CS%Kh_bg_xy)
     DEALLOC_(CS%grid_sp_h2)
+    DEALLOC_(CS%grid_sp_q2)
     if (CS%bound_Kh) then
       DEALLOC_(CS%Kh_Max_xx) ; DEALLOC_(CS%Kh_Max_xy)
     endif
