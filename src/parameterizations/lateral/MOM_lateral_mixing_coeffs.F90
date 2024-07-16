@@ -18,6 +18,7 @@ use MOM_variables,         only : thermo_var_ptrs
 use MOM_verticalGrid,      only : verticalGrid_type
 use MOM_wave_speed,        only : wave_speed, wave_speed_CS, wave_speed_init
 use MOM_open_boundary,     only : ocean_OBC_type, OBC_NONE
+use MOM_MEKE_types,        only : MEKE_type
 
 implicit none ; private
 
@@ -105,6 +106,7 @@ type, public :: VarMix_CS
   real, allocatable :: ebt_struct(:,:,:)  !< Vertical structure function to scale diffusivities with [nondim]
   real, allocatable :: sqg_struct(:,:,:)  !< Vertical structure function of SQG mode with [nondim]
   real :: sqg_expo     !< SQG exponent [nondim] Default 0.0
+  logical :: use_MEKE_LE   !< If true, use MEKE%Le for SQG vertical structure.
 
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
     Laplac3_const_u       !< Laplacian metric-dependent constants [L3 ~> m3]
@@ -202,13 +204,14 @@ subroutine calc_depth_function(G, CS)
 end subroutine calc_depth_function
 
 !> Calculates and stores the non-dimensional resolution functions
-subroutine calc_resoln_function(h, tv, G, GV, US, CS)
+subroutine calc_resoln_function(h, tv, G, GV, US, CS, MEKE)
   type(ocean_grid_type),                     intent(inout) :: G  !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)    :: GV !< Vertical grid structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: h  !< Layer thickness [H ~> m or kg m-2]
   type(thermo_var_ptrs),                     intent(in)    :: tv !< Thermodynamic variables
   type(unit_scale_type),                     intent(in)    :: US !< A dimensional unit scaling type
   type(VarMix_CS),                           intent(inout) :: CS !< Variable mixing control struct
+  type(MEKE_type),                           intent(in)    :: MEKE !< MEKE struct
 
   ! Local variables
   ! Depending on the power-function being used, dimensional rescaling may be limited, so some
@@ -250,7 +253,7 @@ subroutine calc_resoln_function(h, tv, G, GV, US, CS)
   endif
 
   if (CS%sqg_expo>0.0) then
-    call calc_sqg_struct(h, tv, G, GV, US, CS, dt)
+    call calc_sqg_struct(h, tv, G, GV, US, CS, dt, MEKE)
     call pass_var(CS%sqg_struct, G%Domain)
   endif
 
@@ -452,7 +455,7 @@ subroutine calc_resoln_function(h, tv, G, GV, US, CS)
 end subroutine calc_resoln_function
 
 !> Calculates and stores functions of SQG mode
-subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
+subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt, MEKE)
   type(ocean_grid_type),                     intent(inout) :: G  !< Ocean grid structure
   type(verticalGrid_type),                   intent(in)    :: GV !< Vertical grid structure
   type(unit_scale_type),                     intent(in)    :: US !< A dimensional unit scaling type
@@ -460,7 +463,8 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
   type(thermo_var_ptrs),                    intent(in)     :: tv !<Thermodynamic variables
    real,                                      intent(in)    :: dt !< Time increment [T ~> s]
   type(VarMix_CS),                           intent(inout) :: CS !< Variable mixing control struct
-!  type(ocean_OBC_type),                      pointer       :: OBC !< Open
+  type(MEKE_type),                           intent(in)     :: MEKE !< MEKE struct
+  !  type(ocean_OBC_type),                      pointer       :: OBC !< Open
 !  boundaries control structure.
 
   ! Local variables
@@ -472,11 +476,11 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
   real, dimension(SZI_(G), SZJB_(G),SZK_(GV)+1) :: dzv ! Z-thickness at v-points [Z ~> m]
   real, dimension(SZIB_(G), SZJ_(G),SZK_(GV)+1) :: dzSxN ! |Sx| N times dz at u-points [Z T-1 ~> m s-1]
   real, dimension(SZI_(G), SZJB_(G),SZK_(GV)+1) :: dzSyN ! |Sy| N times dz at v-points [Z T-1 ~> m s-1]
-  real :: f  ! Absolute value of the Coriolis parameter [T-1 ~> s-1]
+  real, dimension(SZI_(G), SZJ_(G)) :: f  ! Absolute value of the Coriolis parameter at h point [T-1 ~> s-1]
   real :: N2  ! Positive buoyancy frequency square or zero [L2 Z-2 T-2 ~> s-2]
-  real :: dzc  ! Spacing between two adjacent layers [m]
-  real, dimension(SZK_(GV)) :: zs  ! Stretched vertical coordinate [m]
-  real :: Le  ! Eddy length scale [m]
+  real :: dzc  ! Spacing between two adjacent layers in stretched vertical coordinate [m]
+!  real, dimension(SZK_(GV)) :: zs  ! Stretched vertical coordinate [m]
+  real, dimension(SZI_(G), SZJ_(G)) :: Le  ! Eddy length scale [m]
   integer :: i, j, k, is, ie, js, je, nz
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -492,20 +496,29 @@ subroutine calc_sqg_struct(h, tv, G, GV, US, CS, dt)
   do j=js,je ; do i=is,ie
     CS%sqg_struct(i,j,1) = 1.0
   enddo ; enddo
-  zs(1) = 0.0
-  do j=js,je ; do i=is,ie
-    Le = sqrt(G%areaT(i,j))
-    f = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
-    do k=2,nz
-      N2 = max(0.25*(N2_u(I-1,j,k) + N2_u(I,j,k) + N2_v(i,J-1,k) + N2_v(i,J,k)),0.0)
-      dzc = 0.25*(dzu(I-1,j,k) + dzu(I,j,k) + dzv(i,J-1,k) + dzv(i,J,k))
-      zs(k) = zs(k-1) - N2**0.5/f*dzc
-      CS%sqg_struct(i,j,k) = exp(CS%sqg_expo*zs(k)/Le)
-    enddo
-  enddo ; enddo
+  if (CS%use_MEKE_LE) then
+    do j=js,je ; do i=is,ie
+      Le(i,j) = MEKE%Le(i,j)
+      f(i,j) = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
+    enddo ; enddo
+  else
+    do j=js,je ; do i=is,ie
+      Le(i,j) = sqrt(G%areaT(i,j))
+      f(i,j) = max(0.25*abs(G%CoriolisBu(I,J) + G%CoriolisBu(I-1,J-1) + G%CoriolisBu(I-1,J) + G%CoriolisBu(I,J-1)), 1.0e-8)
+    enddo ; enddo
+  endif
+  do k=2,nz ; do j=js,je ; do i=is,ie
+    N2 = max(0.25*(N2_u(I-1,j,k) + N2_u(I,j,k) + N2_v(i,J-1,k) + N2_v(i,J,k)),0.0)
+    dzc = 0.25*(dzu(I-1,j,k) + dzu(I,j,k) + dzv(i,J-1,k) + dzv(i,J,k))*N2**0.5/f(i,j)
+!    dzs = -N2**0.5/f(i,j)*dzc
+    CS%sqg_struct(i,j,k) = CS%sqg_struct(i,j,k-1)*exp(-CS%sqg_expo*dzc/Le(i,j))
+  enddo ; enddo ; enddo
+
 
   if (query_averaging_enabled(CS%diag)) then
     if (CS%id_sqg_struct > 0) call post_data(CS%id_sqg_struct, CS%sqg_struct, CS%diag)
+    if (CS%id_N2_u > 0) call post_data(CS%id_N2_u, N2_u, CS%diag)
+    if (CS%id_N2_v > 0) call post_data(CS%id_N2_v, N2_v, CS%diag)
   endif
 
 end subroutine calc_sqg_struct
@@ -1289,6 +1302,9 @@ subroutine VarMix_init(Time, G, GV, US, param_file, diag, CS)
                  "well resolved.", default=.false.)
   call get_param(param_file, mdl, "USE_MEKE", use_MEKE, &
                  default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "USE_MEKE_LE", CS%use_MEKE_LE, &
+                 "If true, the eddy scale of MEKE is used for the SQG vertical structure ",&
+                 default=.false.)
   call get_param(param_file, mdl, "RES_SCALE_MEKE_VISC", Resoln_scaled_MEKE_visc, &
                  "If true, the viscosity contribution from MEKE is scaled by "//&
                  "the resolution function.", default=.false., do_not_log=.true.) ! Logged elsewhere.

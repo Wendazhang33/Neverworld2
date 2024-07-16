@@ -353,6 +353,11 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
       call hchksum(LmixScale, 'MEKE LmixScale', G%HI,scale=US%L_to_m)
     endif
 
+    !$OMP parallel do default(shared)
+    do j=js,je ; do i=is,ie
+      MEKE%Le(i,j) = LmixScale(i,j)
+    enddo ; enddo
+
     ! Aggregate sources of MEKE (background, frictional and GM)
     !$OMP parallel do default(shared)
     do j=js,je ; do i=is,ie
@@ -1582,6 +1587,7 @@ subroutine MEKE_alloc_register_restart(HI, GV, param_file, MEKE, restart_CS)
   allocate(MEKE%MEKE(isd:ied,jsd:jed), source=0.0)
   allocate(MEKE%LMEKE(isd:ied,jsd:jed,1:nz), source=0.0)
   allocate(MEKE%diff_struct(isd:ied,jsd:jed,1:nz), source=1.0)
+  allocate(MEKE%Le(isd:ied,jsd:jed), source=0.0)
   vd = var_desc("MEKE", "m2 s-2", hor_grid='h', z_grid='1', &
            longname="Mesoscale Eddy Kinetic Energy")
   call register_restart_field(MEKE%MEKE, vd, .false., restart_CS)
@@ -1645,6 +1651,7 @@ subroutine MEKE_end(MEKE)
   if (allocated(MEKE%Rd_dx_h)) deallocate(MEKE%Rd_dx_h)
   if (allocated(MEKE%Kh)) deallocate(MEKE%Kh)
   if (allocated(MEKE%GME_snk)) deallocate(MEKE%GME_snk)
+  if (allocated(MEKE%Le)) deallocate(MEKE%Le)
   if (allocated(MEKE%mom_src)) deallocate(MEKE%mom_src)
   if (allocated(MEKE%mom_src_bh)) deallocate(MEKE%mom_src_bh) !cyc
   if (allocated(MEKE%GM_src)) deallocate(MEKE%GM_src)

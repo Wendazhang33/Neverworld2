@@ -24,6 +24,7 @@ type, public :: MEKE_type
                                     !! backscatter from unresolved eddies (see Jansen and Held, 2014).
   real, allocatable :: Au(:,:)      !< The MEKE-derived lateral biharmonic viscosity
                                     !! coefficient [L4 T-1 ~> m4 s-1].
+  real, allocatable :: Le(:,:)      !< Eddy length scale [L m]
   real, allocatable :: LMEKE(:,:,:) ! Layerwise eddy kinetic energy [L2 T-2 ~> m2 s-2]
   real, allocatable :: mom_src_3d(:,:,:) !< MEKE source from lateral friction in the
                                     !! momentum equations [R Z L2 T-3 ~> W m-2].
