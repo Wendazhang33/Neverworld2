@@ -728,10 +728,9 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
         !$OMP parallel do default(shared)
         do j=js,je ; do i=is,ie
           MEKE%LMEKE(i,j,k) = (MEKE%LMEKE(i,j,k) + sdt*src_adv_3d(i,j,k))*G%mask2dT(i,j)
+          MEKE%MEKE(i,j) = MEKE%MEKE(i,j) + MEKE%LMEKE(i,j,k)*I_mass(i,j)
         enddo ; enddo
-  
-        MEKE%MEKE(i,j) = MEKE%MEKE(i,j) + MEKE%LMEKE(i,j,k)*I_mass(i,j)
-  
+      
       enddo  ! end k loop
 
       !$OMP parallel do default(shared)
@@ -751,6 +750,7 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
 
     call cpu_clock_begin(CS%id_clock_pass)
     call do_group_pass(CS%pass_MEKE, G%Domain)
+    call do_group_pass(CS%pass_LMEKE, G%Domain)
     call cpu_clock_end(CS%id_clock_pass)
 
     ! Calculate diffusivity for main model to use
@@ -1593,7 +1593,7 @@ logical function MEKE_init(Time, G, US, param_file, diag, CS, MEKE, restart_CS)
   if (allocated(MEKE%LMEKE)) then
     call create_group_pass(CS%pass_LMEKE, MEKE%LMEKE, G%Domain)
     if (allocated(MEKE%diff_struct)) call create_group_pass(CS%pass_LMEKE, MEKE%diff_struct, G%Domain)
-    if (.not.CS%LMEKE_initialize) call do_group_pass(CS%pass_LMEKE, G%Domain)
+    if (.not.CS%LMEKE_initialize) call do_group_pass(CS%pass_LMEKE, G%Domain) 
   endif
   if (allocated(MEKE%Kh)) call create_group_pass(CS%pass_Kh, MEKE%Kh, G%Domain)
   if (allocated(MEKE%Ku)) call create_group_pass(CS%pass_Kh, MEKE%Ku, G%Domain)
